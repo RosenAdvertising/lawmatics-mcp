@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+import pytest
+
+from lawmatics_mcp.client import (
+    LawmaticsAuthError,
+    LawmaticsClient,
+    LawmaticsRateLimitError,
+    build_list_params,
+)
+
+
+def test_bearer_header_on_normal_requests_and_no_auth_on_submit_form(mock_requests):
+    calls, enqueue = mock_requests
+    enqueue()
+    enqueue()
+
+    client = LawmaticsClient()
+    client.get_current_user()
+    client.submit_form(
+        "form-uuid",
+        {"first_name": "Ada"},
+        utm_source="google",
+        utm_campaign="intake",
+    )
+
+    assert calls[0]["url"] == "https://api.lawmatics.com/v1/users/me"
+    assert calls[0]["headers"]["Authorization"] == "Bearer test-token"
+    assert calls[1]["url"] == "https://api.lawmatics.com/v1/forms/form-uuid/submit"
+    assert "Authorization" not in calls[1]["headers"]
+    assert calls[1]["json"] == {
+        "first_name": "Ada",
+        "utm_source": "google",
+        "utm_campaign": "intake",
+    }
+
+
+def test_matters_use_prospects_paths_and_cents_fields_pass_through(mock_requests):
+    calls, enqueue = mock_requests
+    enqueue()
+    enqueue()
+    enqueue()
+
+    client = LawmaticsClient()
+    client.list_matters()
+    client.get_matter("123")
+    client.create_matter(
+        case_title="Estate intake",
+        estimated_value_cents=12345,
+        extra_fields={"actual_value_cents": 67890, "lead_cost_cents": 2500},
+    )
+
+    assert calls[0]["url"] == "https://api.lawmatics.com/v1/prospects"
+    assert calls[1]["url"] == "https://api.lawmatics.com/v1/prospects/123"
+    assert calls[2]["url"] == "https://api.lawmatics.com/v1/prospects"
+    assert all("/matters" not in call["url"] for call in calls)
+    assert calls[2]["json"]["estimated_value_cents"] == 12345
+    assert calls[2]["json"]["actual_value_cents"] == 67890
+    assert calls[2]["json"]["lead_cost_cents"] == 2500
+
+
+def test_shared_list_param_helper_serializes_and_validates_filters():
+    params = build_list_params(
+        page=2,
+        fields="first_name,actual_value_cents",
+        sort_by="actual_value_cents",
+        sort_order="asc",
+        filter_by="estimated_value_cents",
+        filter_on="10000",
+        filter_with="<=",
+    )
+
+    assert params == {
+        "page": 2,
+        "fields": "first_name,actual_value_cents",
+        "sort_by": "actual_value_cents",
+        "sort_order": "asc",
+        "filter_by": "estimated_value_cents",
+        "filter_on": "10000",
+        "filter_with": "<=",
+    }
+
+    with pytest.raises(ValueError, match="filter_by requires filter_on"):
+        build_list_params(filter_by="case_title")
+
+    assert build_list_params(filter_by="closed_at", filter_with="null") == {
+        "page": 1,
+        "filter_by": "closed_at",
+        "filter_with": "null",
+    }
+    assert build_list_params(filter_by="closed_at", filter_with="not_null") == {
+        "page": 1,
+        "filter_by": "closed_at",
+        "filter_with": "not_null",
+    }
+
+
+def test_find_matter_requires_exactly_one_value_and_uses_encoded_paths(mock_requests):
+    calls, enqueue = mock_requests
+    enqueue()
+    enqueue()
+
+    client = LawmaticsClient()
+    client.find_matter(phone="+1 828 555")
+    client.find_matter(name="John Smith")
+
+    assert calls[0]["url"].endswith("/prospects/find_by_phone/%2B1%20828%20555")
+    assert calls[1]["url"].endswith("/prospects/find_by_name/John%20Smith")
+
+    with pytest.raises(ValueError, match="exactly one"):
+        client.find_matter()
+    with pytest.raises(ValueError, match="exactly one"):
+        client.find_matter(phone="123", email="a@example.com")
+
+
+def test_create_note_body_shape_and_notable_type_validation(mock_requests):
+    calls, enqueue = mock_requests
+    enqueue()
+
+    client = LawmaticsClient()
+    client.create_note("Call summary", "Client called back.", "Prospect", "55")
+
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["url"] == "https://api.lawmatics.com/v1/notes"
+    assert calls[0]["json"] == {
+        "name": "Call summary",
+        "body": "Client called back.",
+        "notable_type": "Prospect",
+        "notable_id": "55",
+    }
+
+    with pytest.raises(ValueError, match="notable_type"):
+        client.create_note("Bad", "Body", "Contact", "55")
+    assert len(calls) == 1
+
+
+def test_complete_task_sends_done_true_by_put(mock_requests):
+    calls, enqueue = mock_requests
+    enqueue()
+
+    LawmaticsClient().complete_task("task-9")
+
+    assert calls[0]["method"] == "PUT"
+    assert calls[0]["url"] == "https://api.lawmatics.com/v1/tasks/task-9"
+    assert calls[0]["json"] == {"done": True}
+
+
+def test_task_priority_and_taskable_type_validation_before_http(mock_requests):
+    calls, _enqueue = mock_requests
+    client = LawmaticsClient()
+
+    with pytest.raises(ValueError, match="priority"):
+        client.create_task("Review", priority="urgent")
+
+    with pytest.raises(ValueError, match="taskable_type"):
+        client.create_task("Review", taskable_type="Matter")
+
+    assert calls == []
+
+
+def test_429_raises_rate_limit_error_with_retry_after_and_no_retry(mock_requests):
+    calls, enqueue = mock_requests
+    enqueue(status_code=429, headers={"Retry-After": "60"}, text="rate limited")
+
+    with pytest.raises(LawmaticsRateLimitError, match="Retry-After: 60"):
+        LawmaticsClient().get_current_user()
+
+    assert len(calls) == 1
+
+
+def test_401_raises_rerun_setup_error_and_does_not_refresh(mock_requests):
+    calls, enqueue = mock_requests
+    enqueue(status_code=401, text="unauthorized")
+
+    with pytest.raises(LawmaticsAuthError, match="lawmatics-mcp-setup"):
+        LawmaticsClient().get_current_user()
+
+    assert len(calls) == 1
+    assert calls[0]["url"] == "https://api.lawmatics.com/v1/users/me"
+    assert all("/oauth/token" not in call["url"] for call in calls)
+
