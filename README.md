@@ -131,16 +131,39 @@ These resources or operations are intentionally not included in v0.1 despite par
 - User writes and custom-field writes
 - Contact/company finders
 
-## Development
+## Testing
 
 ```bash
-uv run pytest
+uv run --with pytest pytest -q
 uv build
 ```
 
-The test suite mocks all HTTP and must not use real credentials or make network calls.
+The pytest suite mocks all HTTP and must not use real credentials or make network calls.
+
+MCP certification kit config lives outside this repo in the private cert pack. From
+the staging cert pack used for this package:
+
+```bash
+cd ../cert-pack-staging
+uv run --with-editable /Users/tobyrosen/Cowork/RA-Projects/mcp-test-kit \
+  --with-editable ../lawmatics-mcp \
+  --with pytest \
+  mcp-test-kit run --tier static --config config.py
+uv run --with-editable /Users/tobyrosen/Cowork/RA-Projects/mcp-test-kit \
+  --with-editable ../lawmatics-mcp \
+  --with pytest \
+  mcp-test-kit run --tier secrets --config config.py
+uv run --with-editable /Users/tobyrosen/Cowork/RA-Projects/mcp-test-kit \
+  --with-editable ../lawmatics-mcp \
+  --with pytest \
+  mcp-test-kit run --tier coverage --config config.py
+```
+
+The kit contract/spec-check tier is skipped until Lawmatics publishes an OpenAPI
+dump; do not fabricate one. Smoke read tools are configured in the private cert
+pack but are not run until live Lawmatics credentials and a seed account are
+available. Stateful write certification is not configured yet.
 
 ## License
 
 MIT
-
