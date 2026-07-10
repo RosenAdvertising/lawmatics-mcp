@@ -1,5 +1,9 @@
 # lawmatics-mcp
 
+> [!IMPORTANT]
+> **Built to spec — not yet verified against a live Lawmatics account.**
+> This server was built from Lawmatics's public API documentation and passes its full offline test suite, but we don't currently have Lawmatics API access to verify behavior against the live API. Endpoint paths, parameters, and response shapes follow the documented spec. If you hit a discrepancy, please open an issue.
+
 MCP server for Lawmatics legal CRM and intake. It exposes the confirmed v0.1 API surface for identity, matters, contacts, tasks, notes, events, custom fields, interactions, custom emails, and forms.
 
 ## Requirements
