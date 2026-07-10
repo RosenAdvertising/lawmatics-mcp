@@ -1,5 +1,10 @@
 # lawmatics-mcp
 
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-F59E0B.svg)](https://opensource.org/licenses/MIT)
+[![36 tools](https://img.shields.io/badge/tools-36-22C55E.svg)](https://github.com/RosenAdvertising/lawmatics-mcp)
+[![MCP](https://img.shields.io/badge/MCP-compatible-7C3AED.svg)](https://modelcontextprotocol.io)
+
 > [!IMPORTANT]
 > **Built to spec — not yet verified against a live Lawmatics account.**
 > This server was built from Lawmatics's public API documentation and passes its full offline test suite, but we don't currently have Lawmatics API access to verify behavior against the live API. Endpoint paths, parameters, and response shapes follow the documented spec. If you hit a discrepancy, please open an issue.
