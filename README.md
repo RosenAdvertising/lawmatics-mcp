@@ -124,6 +124,15 @@ The setup command writes this file with mode `0600` in a `0700` config directory
 | Custom emails | `list_custom_emails`, `get_custom_email` |
 | Forms | `list_forms`, `get_form`, `list_form_entries`, `submit_form` |
 
+## Prompts & resources
+
+- Prompt `triage_new_leads`: reviews recent prospects and recommends prioritized intake actions.
+- Prompt `review_pipeline_health`: analyzes stage volume, stale prospects, and conversion bottlenecks.
+- Prompt `sweep_stale_follow_ups`: prepares concrete follow-up work using a configurable staleness threshold.
+- Resource `lawmatics://users`: read-only JSON reference data for firm users and staff.
+- Resource `lawmatics://custom-fields`: read-only JSON metadata for configured CRM custom fields.
+- Resource `lawmatics://security-notes`: guidance on CRM sensitivity, OAuth tokens, rate limits, and prompt injection.
+
 ## v0.2 - deferred pending live verification
 
 These resources or operations are intentionally not included in v0.1 despite partial evidence elsewhere, because they need live verification against the official API before being exposed:
