@@ -23,7 +23,7 @@ lawmatics-mcp-setup = "lawmatics_mcp.setup.setup:main"
 lawmatics-mcp-verify = "lawmatics_mcp.setup.verify:main"
 
 [dependency-groups]
-dev = ["pytest>=8.0.0"]
+dev = ["httpx2>=2.9.0", "pytest>=8.0.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["lawmatics_mcp"]

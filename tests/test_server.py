@@ -59,7 +59,7 @@ def test_server_registers_exactly_three_resources_and_prompts():
     resources = asyncio.run(server.mcp.list_resources())
     prompts = asyncio.run(server.mcp.list_prompts())
 
-    assert {(str(resource.uri), resource.mimeType) for resource in resources} == {
+    assert {(str(resource.uri), resource.mime_type) for resource in resources} == {
         ("lawmatics://users", "application/json"),
         ("lawmatics://custom-fields", "application/json"),
         ("lawmatics://security-notes", "text/markdown"),
