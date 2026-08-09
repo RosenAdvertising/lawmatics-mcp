@@ -3,13 +3,16 @@
 
 from __future__ import annotations
 
+import logging
 import os
-from typing import Any
+from typing import Any, NoReturn
 from urllib.parse import quote
 
 import requests
 
 from lawmatics_mcp import credentials
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.lawmatics.com/v1"
 TOKEN_URL = "https://api.lawmatics.com/oauth/token"
@@ -48,6 +51,21 @@ EVENTABLE_TYPES = {"Prospect", "Contact", "Client"}
 REMINDER_TYPES = {"minutes", "hours", "days", "weeks", "months"}
 
 
+def _reject(reason: str) -> NoReturn:
+    """Reject invalid input after recording a PII-free reason."""
+
+    logger.warning("Lawmatics validation rejected request: %s", reason)
+    raise ValueError(reason)
+
+
+def _validate_page(page: int) -> int:
+    """Return a valid one-indexed page or reject it with a safe log."""
+
+    if page < 1:
+        _reject("page must be 1 or greater")
+    return page
+
+
 class LawmaticsAPIError(RuntimeError):
     """Base error for Lawmatics API failures."""
 
@@ -72,8 +90,12 @@ def _json_response(resp: requests.Response) -> Any:
     try:
         return resp.json()
     except ValueError as exc:
+        logger.warning(
+            "Lawmatics API response rejected: invalid JSON status=%s",
+            resp.status_code,
+        )
         raise LawmaticsAPIError(
-            f"Lawmatics API returned non-JSON ({resp.status_code}): {resp.text[:200]}"
+            f"Lawmatics API returned non-JSON response ({resp.status_code})"
         ) from exc
 
 
@@ -99,19 +121,18 @@ def build_list_params(
 ) -> dict[str, Any]:
     """Build standard Lawmatics list query params with client-side validation."""
 
-    if page < 1:
-        raise ValueError("page must be 1 or greater")
+    page = _validate_page(page)
     if sort_order and sort_order not in VALID_SORT_ORDERS:
-        raise ValueError("sort_order must be 'asc' or 'desc'")
+        _reject("sort_order must be 'asc' or 'desc'")
     if filter_with and filter_with not in VALID_FILTER_OPERATORS:
-        raise ValueError(
+        _reject(
             "filter_with must be one of: "
             + ", ".join(sorted(VALID_FILTER_OPERATORS))
         )
     if filter_on and not filter_by:
-        raise ValueError("filter_on requires filter_by")
+        _reject("filter_on requires filter_by")
     if filter_with and not filter_by:
-        raise ValueError("filter_with requires filter_by")
+        _reject("filter_with requires filter_by")
 
     params: dict[str, Any] = {"page": page}
     if fields:
@@ -124,7 +145,7 @@ def build_list_params(
     operator = filter_with or "="
     if filter_by:
         if not filter_on and operator not in VALUELESS_FILTER_OPERATORS:
-            raise ValueError(
+            _reject(
                 "filter_by requires filter_on unless filter_with is null/not_null"
             )
         params["filter_by"] = filter_by
@@ -153,6 +174,9 @@ class LawmaticsClient:
         credentials.load_into_environ(ENV_KEYS)
         self.access_token = access_token or os.environ.get("LAWMATICS_ACCESS_TOKEN", "")
         if not self.access_token:
+            logger.warning(
+                "Lawmatics client initialization rejected: access token unavailable"
+            )
             raise RuntimeError(
                 "Lawmatics access token not found. Run: lawmatics-mcp-setup"
             )
@@ -181,17 +205,28 @@ class LawmaticsClient:
             headers=headers,
         )
         if resp.status_code == 401:
+            logger.warning(
+                "Lawmatics API request rejected: authentication failed method=%s",
+                method,
+            )
             raise LawmaticsAuthError(
                 "Lawmatics token revoked/invalid - re-run lawmatics-mcp-setup"
             )
         if resp.status_code == 429:
+            logger.warning(
+                "Lawmatics API request rejected: rate limited method=%s",
+                method,
+            )
             raise LawmaticsRateLimitError(resp.headers.get("Retry-After"))
         if resp.status_code == 204:
             return {"success": True}
         if not resp.ok:
-            raise LawmaticsAPIError(
-                f"Lawmatics API error {resp.status_code}: {resp.text[:400]}"
+            logger.warning(
+                "Lawmatics API request rejected: status=%s method=%s",
+                resp.status_code,
+                method,
             )
+            raise LawmaticsAPIError(f"Lawmatics API error {resp.status_code}")
         return _json_response(resp)
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
@@ -296,7 +331,7 @@ class LawmaticsClient:
             "name": name,
         }.items() if value]
         if len(supplied) != 1:
-            raise ValueError("find_matter requires exactly one of phone, email, or name")
+            _reject("find_matter requires exactly one of phone, email, or name")
         key, value = supplied[0]
         finder = {"phone": "find_by_phone", "email": "find_by_email", "name": "find_by_name"}[key]
         return self.get(f"/prospects/{finder}/{quote(value, safe='')}")
@@ -393,9 +428,9 @@ class LawmaticsClient:
         tag_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         if priority not in TASK_PRIORITIES:
-            raise ValueError("priority must be one of: high, medium, low")
+            _reject("priority must be one of: high, medium, low")
         if taskable_type and taskable_type not in TASKABLE_TYPES:
-            raise ValueError(
+            _reject(
                 "taskable_type must be one of: Prospect, Contact, Company, Client"
             )
         body = _compact(
@@ -447,7 +482,7 @@ class LawmaticsClient:
         self, name: str, body: str, notable_type: str, notable_id: str
     ) -> dict[str, Any]:
         if notable_type not in NOTABLE_TYPES:
-            raise ValueError("notable_type must be one of: Prospect, Company")
+            _reject("notable_type must be one of: Prospect, Company")
         return self.post(
             "/notes",
             {
@@ -499,9 +534,9 @@ class LawmaticsClient:
         event_type_id: str = "",
     ) -> dict[str, Any]:
         if eventable_type and eventable_type not in EVENTABLE_TYPES:
-            raise ValueError("eventable_type must be one of: Prospect, Contact, Client")
+            _reject("eventable_type must be one of: Prospect, Contact, Client")
         if reminder_type and reminder_type not in REMINDER_TYPES:
-            raise ValueError(
+            _reject(
                 "reminder_type must be one of: minutes, hours, days, weeks, months"
             )
         body = _compact(
@@ -528,7 +563,10 @@ class LawmaticsClient:
     # Custom fields
 
     def list_custom_fields(self, fields: str = "all", page: int = 1) -> dict[str, Any]:
-        return self.get("/custom_fields", _compact({"fields": fields, "page": page}))
+        return self.get(
+            "/custom_fields",
+            _compact({"fields": fields, "page": _validate_page(page)}),
+        )
 
     def get_custom_field(self, custom_field_id: str) -> dict[str, Any]:
         return self.get(f"/custom_fields/{custom_field_id}")
@@ -576,7 +614,7 @@ class LawmaticsClient:
     # Custom emails
 
     def list_custom_emails(self, page: int = 1) -> dict[str, Any]:
-        return self.get("/custom_emails", {"page": page})
+        return self.get("/custom_emails", {"page": _validate_page(page)})
 
     def get_custom_email(self, custom_email_id: str) -> dict[str, Any]:
         return self.get(f"/custom_emails/{custom_email_id}")
@@ -584,13 +622,15 @@ class LawmaticsClient:
     # Forms
 
     def list_forms(self, page: int = 1) -> dict[str, Any]:
-        return self.get("/forms", {"page": page})
+        return self.get("/forms", {"page": _validate_page(page)})
 
     def get_form(self, form_uuid: str) -> dict[str, Any]:
         return self.get(f"/forms/{form_uuid}", {"fields": "all"})
 
     def list_form_entries(self, form_uuid: str, page: int = 1) -> dict[str, Any]:
-        return self.get(f"/forms/{form_uuid}/entries", {"page": page})
+        return self.get(
+            f"/forms/{form_uuid}/entries", {"page": _validate_page(page)}
+        )
 
     def submit_form(
         self,
@@ -611,4 +651,3 @@ class LawmaticsClient:
             )
         )
         return self.post(f"/forms/{form_uuid}/submit", body, auth=False)
-

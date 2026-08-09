@@ -10,7 +10,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 keywords = ["lawmatics", "mcp", "legal", "law", "crm", "intake"]
-dependencies = ["mcp>=1.0.0", "requests>=2.31.0", "python-dotenv>=1.0.0"]
+dependencies = [
+    "mcp==2.0.0",
+    "pydantic>=2.11.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+]
 
 [project.scripts]
 lawmatics-mcp = "lawmatics_mcp.server:main"
@@ -26,3 +31,8 @@ packages = ["lawmatics_mcp"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]

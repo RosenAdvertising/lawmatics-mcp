@@ -2,13 +2,15 @@
 """Lawmatics MCP server - 36 confirmed tools for legal CRM and intake."""
 
 import json
-from typing import Any
+from typing import Annotated, Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from pydantic import Field
 
 from lawmatics_mcp.client import LawmaticsClient
 
-mcp = FastMCP("lawmatics")
+mcp = MCPServer("lawmatics")
+PageNumber = Annotated[int, Field(ge=1)]
 
 
 def _client() -> LawmaticsClient:
@@ -29,7 +31,7 @@ def get_current_user() -> dict[str, Any]:
 
 @mcp.tool()
 def list_users(
-    page: int = 1,
+    page: PageNumber = 1,
     fields: str = "",
     sort_by: str = "",
     sort_order: str = "",
@@ -73,7 +75,7 @@ def get_user(user_id: str, fields: str = "") -> dict[str, Any]:
 
 @mcp.tool()
 def list_matters(
-    page: int = 1,
+    page: PageNumber = 1,
     fields: str = "",
     sort_by: str = "",
     sort_order: str = "",
@@ -190,7 +192,7 @@ def find_matter(phone: str = "", email: str = "", name: str = "") -> dict[str, A
 
 @mcp.tool()
 def list_contacts(
-    page: int = 1,
+    page: PageNumber = 1,
     fields: str = "",
     sort_by: str = "",
     sort_order: str = "",
@@ -271,7 +273,7 @@ def list_tasks(
     contact_id: str = "",
     company_id: str = "",
     user_id: str = "",
-    page: int = 1,
+    page: PageNumber = 1,
     fields: str = "",
     sort_by: str = "",
     sort_order: str = "",
@@ -388,7 +390,7 @@ def list_task_statuses() -> dict[str, Any]:
 
 @mcp.tool()
 def list_notes(
-    page: int = 1,
+    page: PageNumber = 1,
     fields: str = "",
     sort_by: str = "",
     sort_order: str = "",
@@ -463,7 +465,7 @@ def update_note(note_id: str, note_data: dict[str, Any]) -> dict[str, Any]:
 
 @mcp.tool()
 def list_events(
-    page: int = 1,
+    page: PageNumber = 1,
     fields: str = "",
     sort_by: str = "",
     sort_order: str = "",
@@ -566,7 +568,7 @@ def update_event(event_id: str, event_data: dict[str, Any]) -> dict[str, Any]:
 
 
 @mcp.tool()
-def list_custom_fields(fields: str = "all", page: int = 1) -> dict[str, Any]:
+def list_custom_fields(fields: str = "all", page: PageNumber = 1) -> dict[str, Any]:
     """List custom fields.
 
     Args:
@@ -595,7 +597,7 @@ def get_custom_field(custom_field_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 def list_interactions(
-    page: int = 1,
+    page: PageNumber = 1,
     fields: str = "",
     sort_by: str = "",
     sort_order: str = "",
@@ -656,7 +658,7 @@ def create_interaction(
 
 
 @mcp.tool()
-def list_custom_emails(page: int = 1) -> dict[str, Any]:
+def list_custom_emails(page: PageNumber = 1) -> dict[str, Any]:
     """List custom email templates and campaign stats.
 
     Args:
@@ -683,7 +685,7 @@ def get_custom_email(custom_email_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def list_forms(page: int = 1) -> dict[str, Any]:
+def list_forms(page: PageNumber = 1) -> dict[str, Any]:
     """List custom forms.
 
     Args:
@@ -705,7 +707,7 @@ def get_form(form_uuid: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def list_form_entries(form_uuid: str, page: int = 1) -> dict[str, Any]:
+def list_form_entries(form_uuid: str, page: PageNumber = 1) -> dict[str, Any]:
     """List entries submitted for a custom form.
 
     Args:

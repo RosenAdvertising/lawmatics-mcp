@@ -9,8 +9,8 @@ package stores the OAuth client details and access token in
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from dotenv import load_dotenv
 
@@ -110,4 +110,3 @@ def storage_location() -> str:
     """Return a user-facing description of where credentials are stored."""
 
     return str(env_file())
-
