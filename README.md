@@ -102,8 +102,8 @@ The setup command writes this file with mode `0600` in a `0700` config directory
 ## API Notes
 
 - Base URL: `https://api.lawmatics.com/v1`
-- Rate limit: 50 requests per minute per firm
-- On `429`, Lawmatics returns `Retry-After` such as `60`; this server raises the error and does not auto-sleep.
+- On `429`, the server raises a rate-limit error with any `Retry-After` value
+  returned by Lawmatics and does not auto-sleep.
 - Auth: `Authorization: Bearer <LAWMATICS_ACCESS_TOKEN>` on every authenticated request.
 - `submit_form` is unauthenticated and intentionally sends no bearer header.
 - Matters in the Lawmatics UI are `/v1/prospects` in the API. All matter tools and finders use `/prospects`, never `/matters`.
@@ -153,16 +153,14 @@ These resources or operations are intentionally not included in v0.1 despite par
 ## Testing
 
 ```bash
-uv run --with pytest pytest -q
-uv build
+uv run --offline --locked --with pytest pytest -q
+uv run --offline --locked python tests/spec_check.py --mcp-only
+uv lock --check --offline
 ```
 
-The pytest suite mocks all HTTP and must not use real credentials or make network calls.
-
-Certification beyond the pytest suite (static, secrets, coverage, live smoke and write
-tiers) runs from a private cert pack with an internal MCP test toolkit; those artifacts
-are intentionally not part of this repository. The spec-check tier is skipped until
-Lawmatics publishes an OpenAPI spec. Live tiers run once API credentials are provisioned.
+The pytest fixture uses fake credentials and a temporary config directory.
+Vendor requests are mocked; protocol tests use an in-process HTTP transport.
+These checks do not verify live Lawmatics behavior.
 
 ## License
 
