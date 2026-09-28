@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Offline guard for the MCP protocol revision targeted by lawmatics-mcp."""
 
 from __future__ import annotations
