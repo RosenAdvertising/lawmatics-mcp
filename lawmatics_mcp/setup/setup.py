@@ -58,7 +58,7 @@ def main() -> None:
         },
     )
     if resp.status_code != 200:
-        print(f"Token exchange failed ({resp.status_code}): {resp.text}", file=sys.stderr)
+        print(f"Token exchange failed ({resp.status_code}).", file=sys.stderr)
         sys.exit(1)
 
     token_data = resp.json()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from lawmatics_mcp.client import (
+    LawmaticsAPIError,
     LawmaticsAuthError,
     LawmaticsClient,
     LawmaticsRateLimitError,
@@ -179,3 +180,52 @@ def test_401_raises_rerun_setup_error_and_does_not_refresh(mock_requests):
     assert calls[0]["url"] == "https://api.lawmatics.com/v1/users/me"
     assert all("/oauth/token" not in call["url"] for call in calls)
 
+
+def test_validation_rejections_log_only_pii_free_reasons(mock_requests, caplog):
+    calls, _enqueue = mock_requests
+    client = LawmaticsClient()
+
+    with pytest.raises(ValueError, match="exactly one"):
+        client.find_matter(phone="+1 555 0100", email="person@example.com")
+
+    assert calls == []
+    assert "Lawmatics validation rejected request" in caplog.text
+    assert "+1 555 0100" not in caplog.text
+    assert "person@example.com" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda client: client.list_custom_fields(page=0),
+        lambda client: client.list_custom_emails(page=0),
+        lambda client: client.list_forms(page=0),
+        lambda client: client.list_form_entries("form-uuid", page=0),
+    ],
+)
+def test_specialized_list_tools_reject_invalid_pages_before_http(
+    call, mock_requests, caplog
+):
+    calls, _enqueue = mock_requests
+
+    with pytest.raises(ValueError, match="page must be 1 or greater"):
+        call(LawmaticsClient())
+
+    assert calls == []
+    assert "page must be 1 or greater" in caplog.text
+
+
+def test_api_failure_does_not_emit_vendor_body_to_errors_or_logs(
+    mock_requests, caplog
+):
+    calls, enqueue = mock_requests
+    sensitive_body = "contact person@example.com named Ada"
+    enqueue(status_code=500, text=sensitive_body)
+
+    with pytest.raises(LawmaticsAPIError) as exc_info:
+        LawmaticsClient().get_current_user()
+
+    assert len(calls) == 1
+    assert sensitive_body not in str(exc_info.value)
+    assert "person@example.com" not in caplog.text
+    assert "Ada" not in caplog.text
