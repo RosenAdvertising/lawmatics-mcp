@@ -14,6 +14,7 @@ MCP server for Lawmatics legal CRM and intake. It exposes the confirmed v0.1 API
 ## Requirements
 
 - Python 3.10+
+- MCP Python SDK 2.x (`mcp>=2.2,<3`)
 - A Lawmatics developer app
 - Developer Settings enabled by Lawmatics support: contact `support@lawmatics.com`
 - Claude Desktop or another MCP-compatible client
