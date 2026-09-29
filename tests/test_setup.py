@@ -19,7 +19,9 @@ def test_oauth_token_exchange_uses_a_finite_timeout(monkeypatch) -> None:
 
     monkeypatch.setattr(setup.requests, "post", post)
     monkeypatch.setattr(setup.credentials, "set_many", saved_credentials.update)
-    monkeypatch.setattr(setup.credentials, "storage_location", lambda: "test credentials")
+    monkeypatch.setattr(
+        setup.credentials, "storage_location", lambda: "test credentials"
+    )
     monkeypatch.setattr("lawmatics_mcp.setup.verify.run_verify", lambda: None)
 
     setup.main()
