@@ -5,7 +5,13 @@ from __future__ import annotations
 
 import sys
 
-from lawmatics_mcp.client import LawmaticsClient
+import requests
+
+from lawmatics_mcp.client import (
+    LawmaticsAuthError,
+    LawmaticsClient,
+    LawmaticsMissingCredentialsError,
+)
 
 
 def run_verify() -> dict:
@@ -24,11 +30,16 @@ def run_verify() -> dict:
 def main() -> None:
     try:
         run_verify()
-    except RuntimeError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        sys.exit(1)
     except Exception as exc:  # noqa: BLE001
-        print(f"Unexpected error: {exc}", file=sys.stderr)
+        if isinstance(exc, LawmaticsMissingCredentialsError | LawmaticsAuthError):
+            message = str(exc)
+        elif isinstance(exc, requests.Timeout):
+            message = "Lawmatics verification timed out. Check connectivity and try lawmatics-mcp-verify again."
+        elif isinstance(exc, requests.ConnectionError):
+            message = "Could not connect to Lawmatics. Check connectivity and try lawmatics-mcp-verify again."
+        else:
+            message = "Lawmatics verification failed. Check credentials and connectivity, then try again."
+        print(f"Error: {message}", file=sys.stderr)
         sys.exit(1)
 
 

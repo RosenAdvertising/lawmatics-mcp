@@ -43,10 +43,13 @@ locally, run `ruff check .`. The protocol guard checks the installed SDK's
 revision constant; the separate protocol tests exercise request and response
 behavior. Live Lawmatics API behavior and deployment are outside these checks.
 
-## Open product decision
+## Error behavior
 
-MCP 2.2.0 masks client-visible messages from tool exceptions other than
-`ToolError` and `ResourceError`. Keeping this masking limits leakage; using
-explicitly safe `ToolError` messages would give clients more actionable
-feedback. Toby should decide which errors, if any, should be converted. Tool
-exception handling is unchanged in this migration.
+Tool calls return actionable client errors for missing credentials, rejected
+authorization, rate limits, invalid arguments, and classified API failures.
+Unexpected failures return a fixed masked message. Error responses omit vendor
+response bodies, exception details, URLs, and rejected argument values. Read
+timeouts and connection failures can be retried; for writes the outcome is
+unknown, so callers should check whether the change completed before retrying.
+Resource read failures raise safe resource errors without exposing the underlying
+exception.

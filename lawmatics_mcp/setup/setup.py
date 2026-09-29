@@ -14,19 +14,26 @@ from lawmatics_mcp import credentials
 from lawmatics_mcp.client import AUTHORIZE_URL, DEFAULT_REDIRECT_URI, TOKEN_URL
 
 
-def main() -> None:
+def _run_setup() -> None:
     print("Lawmatics MCP OAuth Setup")
     print("=" * 40)
     print("Developer Settings must be enabled by support@lawmatics.com.")
     print("Create an app in Lawmatics, then enter its OAuth credentials here.")
     print()
 
-    client_id = input("Lawmatics Client ID: ").strip()
-    client_secret = getpass("Lawmatics Client Secret: ").strip()
-    redirect_uri = (
-        input(f"Redirect URI [{DEFAULT_REDIRECT_URI}]: ").strip()
-        or DEFAULT_REDIRECT_URI
-    )
+    try:
+        client_id = input("Lawmatics Client ID: ").strip()
+        client_secret = getpass("Lawmatics Client Secret: ").strip()
+        redirect_uri = (
+            input(f"Redirect URI [{DEFAULT_REDIRECT_URI}]: ").strip()
+            or DEFAULT_REDIRECT_URI
+        )
+    except (EOFError, KeyboardInterrupt):
+        print(
+            "Error: setup input ended before OAuth credentials were provided.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     if not client_id or not client_secret:
         print("Error: Client ID and Client Secret are required.", file=sys.stderr)
@@ -43,27 +50,59 @@ def main() -> None:
     print(auth_url)
     print()
 
-    code = input("Authorization code: ").strip()
+    try:
+        code = input("Authorization code: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("Error: authorization code is required.", file=sys.stderr)
+        sys.exit(1)
     if not code:
         print("Error: authorization code is required.", file=sys.stderr)
         sys.exit(1)
 
-    resp = requests.post(
-        TOKEN_URL,
-        data={
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": redirect_uri,
-        },
-        timeout=30,
-    )
+    try:
+        resp = requests.post(
+            TOKEN_URL,
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+            },
+            timeout=30,
+        )
+    except (requests.Timeout, requests.ConnectionError):
+        print(
+            "Error: Lawmatics token exchange timed out or lost its connection; the outcome is unknown. Check whether authorization completed before retrying setup.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except requests.RequestException:
+        print(
+            "Error: Lawmatics token exchange failed. Check the OAuth configuration and try setup again.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if resp.status_code == 403:
+        print(
+            "Error: Lawmatics access denied: the connected account lacks permission for this action (or the authorization expired; re-run lawmatics-mcp-setup if so).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     if resp.status_code != 200:
         print(f"Token exchange failed ({resp.status_code}).", file=sys.stderr)
         sys.exit(1)
 
-    token_data = resp.json()
+    try:
+        token_data = resp.json()
+        if not isinstance(token_data, dict):
+            raise ValueError
+    except (ValueError, requests.RequestException):
+        print(
+            "Error: Lawmatics token exchange returned an invalid response.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     access_token = token_data.get("access_token")
     if not access_token:
         print("Token exchange response did not contain access_token.", file=sys.stderr)
@@ -87,9 +126,23 @@ def main() -> None:
         from lawmatics_mcp.setup.verify import run_verify
 
         run_verify()
-    except Exception as exc:  # noqa: BLE001
-        print(f"Verification failed: {exc}", file=sys.stderr)
+    except Exception:  # noqa: BLE001
+        print(
+            "Verification failed. Check credentials and connectivity, then try lawmatics-mcp-verify.",
+            file=sys.stderr,
+        )
         print("Check your app settings and token, then try lawmatics-mcp-verify.")
+        sys.exit(1)
+
+
+def main() -> None:
+    try:
+        _run_setup()
+    except Exception:
+        print(
+            "Error: Lawmatics setup failed. Check the OAuth configuration and credential storage, then run lawmatics-mcp-setup again.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 

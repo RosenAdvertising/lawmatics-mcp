@@ -27,6 +27,7 @@ def test_bearer_header_on_normal_requests_and_no_auth_on_submit_form(mock_reques
 
     assert calls[0]["url"] == "https://api.lawmatics.com/v1/users/me"
     assert calls[0]["headers"]["Authorization"] == "Bearer test-token"
+    assert calls[0]["kwargs"]["timeout"] == 30
     assert calls[1]["url"] == "https://api.lawmatics.com/v1/forms/form-uuid/submit"
     assert "Authorization" not in calls[1]["headers"]
     assert calls[1]["json"] == {
@@ -114,6 +115,24 @@ def test_find_matter_requires_exactly_one_value_and_uses_encoded_paths(mock_requ
         client.find_matter(phone="123", email="a@example.com")
 
 
+@pytest.mark.parametrize(
+    ("identifier", "encoded"),
+    [
+        ("../x", "..%2Fx"),
+        ("x?secret", "x%3Fsecret"),
+        ("x#fragment", "x%23fragment"),
+        ("a/b", "a%2Fb"),
+    ],
+)
+def test_string_identifiers_are_confined_to_one_encoded_path_segment(
+    mock_requests, identifier, encoded
+):
+    calls, enqueue = mock_requests
+    enqueue()
+    LawmaticsClient().get_matter(identifier)
+    assert calls[0]["url"] == f"https://api.lawmatics.com/v1/prospects/{encoded}"
+
+
 def test_create_note_body_shape_and_notable_type_validation(mock_requests):
     calls, enqueue = mock_requests
     enqueue()
@@ -179,6 +198,37 @@ def test_401_raises_rerun_setup_error_and_does_not_refresh(mock_requests):
     assert len(calls) == 1
     assert calls[0]["url"] == "https://api.lawmatics.com/v1/users/me"
     assert all("/oauth/token" not in call["url"] for call in calls)
+
+
+def test_403_reports_permission_or_expired_authorization_guidance(mock_requests):
+    calls, enqueue = mock_requests
+    enqueue(status_code=403, text="private vendor body")
+    with pytest.raises(LawmaticsAuthError) as exc_info:
+        LawmaticsClient().get_current_user()
+    assert (
+        str(exc_info.value)
+        == "Lawmatics access denied: the connected account lacks permission for this action (or the authorization expired; re-run lawmatics-mcp-setup if so)."
+    )
+    assert calls[0]["kwargs"]["timeout"] == 30
+
+
+def test_non_success_empty_response_body_is_an_error(mock_requests):
+    calls, enqueue = mock_requests
+    enqueue(status_code=500, text="")
+    with pytest.raises(LawmaticsAPIError) as exc_info:
+        LawmaticsClient().get_current_user()
+    assert exc_info.value.status_code == 500
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("payload", [[], "VENDOR-SECRET https://evil.test"])
+def test_success_response_with_non_object_json_is_a_safe_error(mock_requests, payload):
+    _calls, enqueue = mock_requests
+    enqueue(status_code=200, json_data=payload)
+    with pytest.raises(LawmaticsAPIError) as exc_info:
+        LawmaticsClient().get_current_user()
+    assert str(exc_info.value) == "Lawmatics API error 200"
+    assert "VENDOR-SECRET" not in str(exc_info.value)
 
 
 def test_validation_rejections_log_only_pii_free_reasons(mock_requests, caplog):

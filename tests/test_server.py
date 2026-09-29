@@ -8,7 +8,8 @@ from unittest.mock import Mock
 
 import pytest
 import requests
-from mcp_types import CallToolRequestParams
+from mcp.shared.exceptions import MCPError
+from mcp_types import CallToolRequestParams, ReadResourceRequestParams
 
 from lawmatics_mcp import server
 
@@ -95,7 +96,7 @@ def _call_tool(name: str, arguments: dict | None = None):
             403,
             {},
             {},
-            "Lawmatics authentication was rejected or expired. Reauthorize with lawmatics-mcp-setup.",
+            "Lawmatics access denied: the connected account lacks permission for this action (or the authorization expired; re-run lawmatics-mcp-setup if so).",
         ),
         (
             429,
@@ -107,7 +108,7 @@ def _call_tool(name: str, arguments: dict | None = None):
             429,
             {"Retry-After": "999999"},
             {},
-            "Lawmatics rate limit reached. Retry after 3600 seconds; this client does not auto-retry.",
+            "Lawmatics rate limit reached. Retry after 999999 seconds; this client does not auto-retry.",
         ),
         (
             429,
@@ -225,6 +226,31 @@ def test_json_resources_call_the_client_and_return_valid_json(
 
 
 @pytest.mark.parametrize(
+    "uri, label",
+    [("lawmatics://users", "users"), ("lawmatics://custom-fields", "custom fields")],
+)
+def test_resource_failure_is_a_safe_protocol_error(monkeypatch, caplog, uri, label):
+    sentinel = "RESOURCE-SECRET https://evil.test/token"
+
+    def fail():
+        raise RuntimeError(sentinel)
+
+    monkeypatch.setattr(server, "_client", fail)
+    with pytest.raises(MCPError) as error:
+        asyncio.run(
+            server.mcp._handle_read_resource(
+                cast(Any, None), ReadResourceRequestParams(uri=uri)
+            )
+        )
+    assert (
+        str(error.value)
+        == f"Unable to read Lawmatics {label}. Check the connection and authorization."
+    )
+    assert sentinel not in caplog.text
+    assert "Traceback" not in caplog.text
+
+
+@pytest.mark.parametrize(
     ("prompt", "kwargs"),
     [
         (server.triage_new_leads, {}),
@@ -270,10 +296,13 @@ def test_http_reason_allowlist_and_malformed_codes(mock_requests, body, expected
 @pytest.mark.parametrize(
     ("error_type", "expected"),
     [
-        (requests.Timeout, "Lawmatics request timed out. Retry shortly."),
+        (
+            requests.Timeout,
+            "Lawmatics request timed out. Retry the read when the service is available.",
+        ),
         (
             requests.ConnectionError,
-            "Could not connect to Lawmatics. Check connectivity and retry.",
+            "Could not connect to Lawmatics. Check connectivity, then retry the read.",
         ),
         (ValueError, "Error executing tool get_current_user"),
     ],
@@ -290,6 +319,59 @@ def test_transport_failure_and_unknown_valueerror(
     assert result.content[0].text == expected
     assert "private@example.test" not in caplog.text
     assert "Traceback" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("error_type", "expected"),
+    [
+        (
+            requests.Timeout,
+            "Lawmatics request timed out. The outcome is unknown; check whether the change completed before retrying.",
+        ),
+        (
+            requests.ConnectionError,
+            "Could not connect to Lawmatics. The outcome is unknown; check whether the change completed before retrying.",
+        ),
+    ],
+)
+def test_write_transport_failures_warn_that_outcome_is_unknown(
+    monkeypatch, error_type, expected
+):
+    def fail(*_args, **_kwargs):
+        raise error_type("private URL https://evil.test/?token=sentinel")
+
+    monkeypatch.setattr(requests.Session, "request", fail)
+    result = _call_tool(
+        "create_note",
+        {"name": "x", "body": "y", "notable_type": "Prospect", "notable_id": "1"},
+    )
+    assert result.is_error is True
+    assert result.content[0].text == expected
+    assert "evil.test" not in result.content[0].text
+
+
+def test_sdk_validation_error_does_not_echo_hostile_value():
+    sentinel = "SCHEMA-SECRET https://evil.test/?key=abc"
+    result = _call_tool("list_users", {"page": sentinel})
+    assert result.is_error is True
+    assert result.content[0].text == "Invalid arguments: 'page' must be integer >= 1."
+    assert sentinel not in result.content[0].text
+
+
+def test_unexpected_tool_error_with_known_nested_cause_stays_masked(monkeypatch):
+    sentinel = "NESTED-SECRET"
+
+    def crash():
+        try:
+            raise requests.Timeout("secret")
+        except requests.Timeout as cause:
+            raise RuntimeError(sentinel) from cause
+
+    monkeypatch.setattr(server, "_client", crash)
+    result = _call_tool("get_current_user")
+    assert result.is_error is True
+    assert result.content[0].text == "Error executing tool get_current_user"
+    assert sentinel not in result.content[0].text
 
 
 @pytest.mark.parametrize(

@@ -94,11 +94,13 @@ class LawmaticsAPIError(ToolError, RuntimeError):
 class LawmaticsAuthError(LawmaticsAPIError):
     """Raised when the stored Lawmatics access token is invalid or revoked."""
 
-    def __init__(self):
-        super().__init__(401, "authentication was rejected")
-        self.args = (
-            "Lawmatics authentication was rejected or expired. Reauthorize with lawmatics-mcp-setup.",
-        )
+    def __init__(self, status_code: int):
+        super().__init__(status_code, "authentication was rejected")
+        if status_code == 403:
+            message = "Lawmatics access denied: the connected account lacks permission for this action (or the authorization expired; re-run lawmatics-mcp-setup if so)."
+        else:
+            message = "Lawmatics authentication was rejected or expired. Reauthorize with lawmatics-mcp-setup."
+        self.args = (message,)
 
 
 class LawmaticsRateLimitError(LawmaticsAPIError):
@@ -118,11 +120,11 @@ class LawmaticsRateLimitError(LawmaticsAPIError):
 
 
 def _safe_retry_after(value: str | None) -> int | None:
-    """Accept only numeric Retry-After seconds and cap the client-facing hint."""
+    """Accept numeric Retry-After seconds without shortening the retry hint."""
     if value is None or not value.isascii() or not value.isdecimal():
         return None
     try:
-        return min(int(value), 3600)
+        return int(value)
     except (ValueError, OverflowError):
         return None
 
@@ -157,7 +159,7 @@ def _safe_vendor_reason(resp: requests.Response) -> str:
 
 def _json_response(resp: requests.Response) -> Any:
     try:
-        return resp.json()
+        payload = resp.json()
     except ValueError as exc:
         logger.warning(
             "Lawmatics API response rejected: invalid JSON status=%s",
@@ -166,6 +168,13 @@ def _json_response(resp: requests.Response) -> Any:
         raise LawmaticsAPIError(
             resp.status_code, "response was not valid JSON"
         ) from exc
+    if not isinstance(payload, dict):
+        logger.warning(
+            "Lawmatics API response rejected: unexpected JSON shape status=%s",
+            resp.status_code,
+        )
+        raise LawmaticsAPIError(resp.status_code, "response had an unexpected shape")
+    return payload
 
 
 def _compact(data: dict[str, Any]) -> dict[str, Any]:
@@ -269,13 +278,14 @@ class LawmaticsClient:
             params=params,
             json=json_body,
             headers=headers,
+            timeout=30,
         )
         if resp.status_code in (401, 403):
             logger.warning(
                 "Lawmatics API request rejected: authentication failed method=%s",
                 method,
             )
-            raise LawmaticsAuthError()
+            raise LawmaticsAuthError(resp.status_code)
         if resp.status_code == 429:
             logger.warning(
                 "Lawmatics API request rejected: rate limited method=%s",
@@ -325,7 +335,9 @@ class LawmaticsClient:
         )
 
     def get_user(self, user_id: str, fields: str = "") -> dict[str, Any]:
-        return self.get(f"/users/{user_id}", build_fields_params(fields))
+        return self.get(
+            f"/users/{quote(str(user_id), safe='')}", build_fields_params(fields)
+        )
 
     # Matters: Lawmatics API resource is /prospects.
 
@@ -347,7 +359,9 @@ class LawmaticsClient:
         )
 
     def get_matter(self, matter_id: str, fields: str = "") -> dict[str, Any]:
-        return self.get(f"/prospects/{matter_id}", build_fields_params(fields))
+        return self.get(
+            f"/prospects/{quote(str(matter_id), safe='')}", build_fields_params(fields)
+        )
 
     def create_matter(
         self,
@@ -386,7 +400,7 @@ class LawmaticsClient:
     def update_matter(
         self, matter_id: str, matter_data: dict[str, Any]
     ) -> dict[str, Any]:
-        return self.put(f"/prospects/{matter_id}", matter_data)
+        return self.put(f"/prospects/{quote(str(matter_id), safe='')}", matter_data)
 
     def find_matter(
         self, phone: str = "", email: str = "", name: str = ""
@@ -408,7 +422,7 @@ class LawmaticsClient:
             "email": "find_by_email",
             "name": "find_by_name",
         }[key]
-        return self.get(f"/prospects/{finder}/{quote(value, safe='')}")
+        return self.get(f"/prospects/{finder}/{quote(str(value), safe='')}")
 
     # Contacts
 
@@ -430,7 +444,9 @@ class LawmaticsClient:
         )
 
     def get_contact(self, contact_id: str, fields: str = "") -> dict[str, Any]:
-        return self.get(f"/contacts/{contact_id}", build_fields_params(fields))
+        return self.get(
+            f"/contacts/{quote(str(contact_id), safe='')}", build_fields_params(fields)
+        )
 
     def create_contact(
         self,
@@ -454,7 +470,7 @@ class LawmaticsClient:
     def update_contact(
         self, contact_id: str, contact_data: dict[str, Any]
     ) -> dict[str, Any]:
-        return self.put(f"/contacts/{contact_id}", contact_data)
+        return self.put(f"/contacts/{quote(str(contact_id), safe='')}", contact_data)
 
     # Tasks
 
@@ -488,7 +504,9 @@ class LawmaticsClient:
         return self.get("/tasks", params)
 
     def get_task(self, task_id: str, fields: str = "") -> dict[str, Any]:
-        return self.get(f"/tasks/{task_id}", build_fields_params(fields))
+        return self.get(
+            f"/tasks/{quote(str(task_id), safe='')}", build_fields_params(fields)
+        )
 
     def create_task(
         self,
@@ -520,10 +538,10 @@ class LawmaticsClient:
         return self.post("/tasks", body)
 
     def update_task(self, task_id: str, task_data: dict[str, Any]) -> dict[str, Any]:
-        return self.put(f"/tasks/{task_id}", task_data)
+        return self.put(f"/tasks/{quote(str(task_id), safe='')}", task_data)
 
     def complete_task(self, task_id: str) -> dict[str, Any]:
-        return self.put(f"/tasks/{task_id}", {"done": True})
+        return self.put(f"/tasks/{quote(str(task_id), safe='')}", {"done": True})
 
     def list_task_statuses(self) -> dict[str, Any]:
         return self.get("/task_statuses")
@@ -548,7 +566,9 @@ class LawmaticsClient:
         )
 
     def get_note(self, note_id: str, fields: str = "") -> dict[str, Any]:
-        return self.get(f"/notes/{note_id}", build_fields_params(fields))
+        return self.get(
+            f"/notes/{quote(str(note_id), safe='')}", build_fields_params(fields)
+        )
 
     def create_note(
         self, name: str, body: str, notable_type: str, notable_id: str
@@ -566,7 +586,7 @@ class LawmaticsClient:
         )
 
     def update_note(self, note_id: str, note_data: dict[str, Any]) -> dict[str, Any]:
-        return self.put(f"/notes/{note_id}", note_data)
+        return self.put(f"/notes/{quote(str(note_id), safe='')}", note_data)
 
     # Events
 
@@ -588,7 +608,9 @@ class LawmaticsClient:
         )
 
     def get_event(self, event_id: str, fields: str = "") -> dict[str, Any]:
-        return self.get(f"/events/{event_id}", build_fields_params(fields))
+        return self.get(
+            f"/events/{quote(str(event_id), safe='')}", build_fields_params(fields)
+        )
 
     def create_event(
         self,
@@ -628,7 +650,7 @@ class LawmaticsClient:
         return self.post("/events", body)
 
     def update_event(self, event_id: str, event_data: dict[str, Any]) -> dict[str, Any]:
-        return self.put(f"/events/{event_id}", event_data)
+        return self.put(f"/events/{quote(str(event_id), safe='')}", event_data)
 
     # Custom fields
 
@@ -639,7 +661,7 @@ class LawmaticsClient:
         )
 
     def get_custom_field(self, custom_field_id: str) -> dict[str, Any]:
-        return self.get(f"/custom_fields/{custom_field_id}")
+        return self.get(f"/custom_fields/{quote(str(custom_field_id), safe='')}")
 
     # Interactions
 
@@ -687,7 +709,7 @@ class LawmaticsClient:
         return self.get("/custom_emails", {"page": _validate_page(page)})
 
     def get_custom_email(self, custom_email_id: str) -> dict[str, Any]:
-        return self.get(f"/custom_emails/{custom_email_id}")
+        return self.get(f"/custom_emails/{quote(str(custom_email_id), safe='')}")
 
     # Forms
 
@@ -695,10 +717,13 @@ class LawmaticsClient:
         return self.get("/forms", {"page": _validate_page(page)})
 
     def get_form(self, form_uuid: str) -> dict[str, Any]:
-        return self.get(f"/forms/{form_uuid}", {"fields": "all"})
+        return self.get(f"/forms/{quote(str(form_uuid), safe='')}", {"fields": "all"})
 
     def list_form_entries(self, form_uuid: str, page: int = 1) -> dict[str, Any]:
-        return self.get(f"/forms/{form_uuid}/entries", {"page": _validate_page(page)})
+        return self.get(
+            f"/forms/{quote(str(form_uuid), safe='')}/entries",
+            {"page": _validate_page(page)},
+        )
 
     def submit_form(
         self,
@@ -718,4 +743,6 @@ class LawmaticsClient:
                 }
             )
         )
-        return self.post(f"/forms/{form_uuid}/submit", body, auth=False)
+        return self.post(
+            f"/forms/{quote(str(form_uuid), safe='')}/submit", body, auth=False
+        )

@@ -7,11 +7,13 @@ from typing import Annotated, Any
 
 import requests
 from mcp.server import MCPServer
-from mcp.server.context import ServerRequestContext
 from mcp.server.mcpserver.context import Context
-from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+from mcp.server.mcpserver.exceptions import (
+    ResourceError,
+    ToolError,
+    UnexpectedToolError,
+)
 from mcp.shared.exceptions import MCPError
-from mcp_types import CallToolRequestParams, CallToolResult, TextContent
 from pydantic import Field, ValidationError
 
 from lawmatics_mcp.client import (
@@ -54,9 +56,45 @@ def _validation_message(tool: Any, error: ValidationError) -> str:
     return "Invalid arguments: " + "; ".join(parts) + "."
 
 
-def _safe_tool_error(exc: BaseException, tool: Any) -> str | None:
+_WRITE_TOOLS = {
+    "create_matter",
+    "update_matter",
+    "create_contact",
+    "update_contact",
+    "create_task",
+    "update_task",
+    "complete_task",
+    "create_note",
+    "update_note",
+    "create_event",
+    "update_event",
+    "create_interaction",
+    "submit_form",
+}
+
+
+def _safe_tool_error(exc: BaseException, tool: Any, tool_name: str = "") -> str | None:
     """Only the SDK wrapper is unwrapped; unknown causes stay masked."""
-    item = exc.__cause__ if isinstance(exc, ToolError) and exc.__cause__ else exc
+    known_wrapped_types = (
+        ValidationError,
+        LawmaticsMissingCredentialsError,
+        LawmaticsAuthError,
+        LawmaticsRateLimitError,
+        LawmaticsAPIError,
+        LawmaticsValidationError,
+        requests.Timeout,
+        requests.ConnectionError,
+    )
+    known_sdk_cause = isinstance(exc.__cause__, known_wrapped_types)
+    item = (
+        exc.__cause__
+        if (
+            type(exc) is UnexpectedToolError
+            or (type(exc) is ToolError and known_sdk_cause)
+        )
+        and exc.__cause__ is not None
+        else exc
+    )
     if (
         isinstance(exc, ToolError)
         and not isinstance(exc, UnexpectedToolError)
@@ -65,8 +103,13 @@ def _safe_tool_error(exc: BaseException, tool: Any) -> str | None:
         return _validation_message(tool, item)
     if isinstance(item, LawmaticsMissingCredentialsError):
         return "Lawmatics credentials are missing. Run lawmatics-mcp-setup or set LAWMATICS_ACCESS_TOKEN."
-    if isinstance(item, (LawmaticsAuthError, LawmaticsRateLimitError)):
+    if isinstance(item, LawmaticsAuthError):
         return str(item)
+    if isinstance(item, LawmaticsRateLimitError):
+        delay = item.retry_after_seconds
+        if delay is not None:
+            return f"Lawmatics rate limit reached. Retry after {delay} seconds; this client does not auto-retry."
+        return "Lawmatics rate limit reached. Retry later; this client does not auto-retry."
     if isinstance(item, LawmaticsAPIError):
         if item.status_code == 404:
             return "The requested Lawmatics record was not found (HTTP 404). Check the record ID."
@@ -75,40 +118,39 @@ def _safe_tool_error(exc: BaseException, tool: Any) -> str | None:
         # _reject uses fixed, source-controlled reason strings.
         return f"Invalid arguments: {item.safe_message}."
     if isinstance(item, requests.Timeout):
-        return "Lawmatics request timed out. Retry shortly."
+        if tool_name in _WRITE_TOOLS:
+            return "Lawmatics request timed out. The outcome is unknown; check whether the change completed before retrying."
+        return (
+            "Lawmatics request timed out. Retry the read when the service is available."
+        )
     if isinstance(item, requests.ConnectionError):
-        return "Could not connect to Lawmatics. Check connectivity and retry."
+        if tool_name in _WRITE_TOOLS:
+            return "Could not connect to Lawmatics. The outcome is unknown; check whether the change completed before retrying."
+        return (
+            "Could not connect to Lawmatics. Check connectivity, then retry the read."
+        )
     return None
 
 
 class SafeMCPServer(MCPServer):
     """MCP boundary that keeps SDK exception details and input values private."""
 
-    async def _handle_call_tool(
-        self, ctx: ServerRequestContext[Any], params: CallToolRequestParams
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any], context: Context | None = None
     ) -> Any:
-        context = Context(
-            request_context=ctx,
-            mcp_server=self,
-            input_params=params,
-            subscriptions=self._subscriptions,
-        )
-        tool = self._tool_manager.get_tool(params.name)
+        tool = self._tool_manager.get_tool(name)
         try:
-            return await self.call_tool(params.name, params.arguments or {}, context)
+            return await super().call_tool(name, arguments, context)
         except MCPError:
             raise
         except Exception as exc:
-            message = _safe_tool_error(exc, tool)
-            if message is not None:
-                logger.info("Tool call failed: classified anticipated tool error")
-            else:
-                message = f"Error executing tool {params.name if tool else 'unknown'}"
-                # Never log exc, traceback, or an exception cause at this boundary.
+            message = _safe_tool_error(exc, tool, name)
+            if message is None:
+                message = f"Error executing tool {name if tool else 'unknown'}"
                 logger.error("Tool call failed: classified unexpected tool error")
-            return CallToolResult(
-                content=[TextContent(type="text", text=message)], is_error=True
-            )
+            else:
+                logger.info("Tool call failed: classified anticipated tool error")
+            raise ToolError(message) from None
 
 
 mcp = SafeMCPServer("lawmatics")
@@ -859,14 +901,28 @@ def submit_form(
 def users_resource() -> str:
     """Firm users configured in Lawmatics — read-only reference data."""
 
-    return json.dumps(_client().list_users(page=1, fields="all"), indent=2)
+    try:
+        return json.dumps(_client().list_users(page=1, fields="all"), indent=2)
+    except Exception as exc:
+        message = (
+            _safe_tool_error(exc, None)
+            or "Unable to read Lawmatics users. Check the connection and authorization."
+        )
+        raise ResourceError(message) from None
 
 
 @mcp.resource("lawmatics://custom-fields", mime_type="application/json")
 def custom_fields_resource() -> str:
     """Lawmatics custom-field definitions — read-only CRM metadata."""
 
-    return json.dumps(_client().list_custom_fields(fields="all", page=1), indent=2)
+    try:
+        return json.dumps(_client().list_custom_fields(fields="all", page=1), indent=2)
+    except Exception as exc:
+        message = (
+            _safe_tool_error(exc, None)
+            or "Unable to read Lawmatics custom fields. Check the connection and authorization."
+        )
+        raise ResourceError(message) from None
 
 
 @mcp.resource("lawmatics://security-notes", mime_type="text/markdown")
