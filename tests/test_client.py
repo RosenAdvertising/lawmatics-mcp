@@ -215,9 +215,7 @@ def test_specialized_list_tools_reject_invalid_pages_before_http(
     assert "page must be 1 or greater" in caplog.text
 
 
-def test_api_failure_does_not_emit_vendor_body_to_errors_or_logs(
-    mock_requests, caplog
-):
+def test_api_failure_does_not_emit_vendor_body_to_errors_or_logs(mock_requests, caplog):
     calls, enqueue = mock_requests
     sensitive_body = "contact person@example.com named Ada"
     enqueue(status_code=500, text=sensitive_body)

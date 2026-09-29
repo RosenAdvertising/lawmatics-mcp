@@ -88,7 +88,9 @@ TOOL_CONTRACTS = [
         kwargs={"email": "ada+law@example.com"},
     ),
     ToolContract("list_contacts", "GET", "/v1/contacts", params={"page": 1}),
-    ToolContract("get_contact", "GET", "/v1/contacts/contact-123", args=("contact-123",)),
+    ToolContract(
+        "get_contact", "GET", "/v1/contacts/contact-123", args=("contact-123",)
+    ),
     ToolContract(
         "create_contact",
         "POST",
@@ -285,7 +287,9 @@ TOOL_CONTRACTS = [
         "/v1/custom_emails/custom-email-123",
         args=("custom-email-123",),
     ),
-    ToolContract("list_forms", "GET", "/v1/forms", kwargs={"page": 2}, params={"page": 2}),
+    ToolContract(
+        "list_forms", "GET", "/v1/forms", kwargs={"page": 2}, params={"page": 2}
+    ),
     ToolContract(
         "get_form",
         "GET",
@@ -431,7 +435,14 @@ def test_standard_list_tools_omit_unsupplied_optional_params(
     getattr(server, tool_name)()
 
     _assert_request(calls[0], method="GET", path=path, params={"page": 1})
-    for optional in ("fields", "sort_by", "sort_order", "filter_by", "filter_on", "filter_with"):
+    for optional in (
+        "fields",
+        "sort_by",
+        "sort_order",
+        "filter_by",
+        "filter_on",
+        "filter_with",
+    ):
         assert optional not in calls[0]["params"]
 
 
@@ -441,7 +452,11 @@ def test_standard_list_tools_omit_unsupplied_optional_params(
         ("list_custom_fields", {"fields": "all", "page": 4}, "/v1/custom_fields"),
         ("list_custom_emails", {"page": 4}, "/v1/custom_emails"),
         ("list_forms", {"page": 4}, "/v1/forms"),
-        ("list_form_entries", {"form_uuid": "form-uuid-123", "page": 4}, "/v1/forms/form-uuid-123/entries"),
+        (
+            "list_form_entries",
+            {"form_uuid": "form-uuid-123", "page": 4},
+            "/v1/forms/form-uuid-123/entries",
+        ),
     ],
 )
 def test_paginated_read_only_list_tools_send_documented_page_params(
@@ -505,8 +520,14 @@ def test_single_resource_tools_omit_unsupplied_fields_param(
 @pytest.mark.parametrize(
     ("kwargs", "path"),
     [
-        ({"phone": "+1 (828) 555-0199"}, "/v1/prospects/find_by_phone/%2B1%20%28828%29%20555-0199"),
-        ({"email": "ada+intake@example.com"}, "/v1/prospects/find_by_email/ada%2Bintake%40example.com"),
+        (
+            {"phone": "+1 (828) 555-0199"},
+            "/v1/prospects/find_by_phone/%2B1%20%28828%29%20555-0199",
+        ),
+        (
+            {"email": "ada+intake@example.com"},
+            "/v1/prospects/find_by_email/ada%2Bintake%40example.com",
+        ),
         ({"name": "Ada Lovelace"}, "/v1/prospects/find_by_name/Ada%20Lovelace"),
     ],
 )
@@ -604,7 +625,9 @@ def test_create_tools_omit_empty_optional_body_fields(
 
 
 @pytest.mark.parametrize("operator", ["null", "not_null", "empty", "present", "blank"])
-def test_filter_by_without_filter_on_allows_valueless_presence_operators(operator: str) -> None:
+def test_filter_by_without_filter_on_allows_valueless_presence_operators(
+    operator: str,
+) -> None:
     assert build_list_params(filter_by="closed_at", filter_with=operator) == {
         "page": 1,
         "filter_by": "closed_at",
@@ -638,7 +661,15 @@ def test_create_task_enum_validation_fires_before_http(
 @pytest.mark.parametrize(
     ("kwargs", "match"),
     [
-        ({"name": "Bad", "body": "Body", "notable_type": "Contact", "notable_id": "1"}, "notable_type"),
+        (
+            {
+                "name": "Bad",
+                "body": "Body",
+                "notable_type": "Contact",
+                "notable_id": "1",
+            },
+            "notable_type",
+        ),
         (
             {
                 "name": "Bad",

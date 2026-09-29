@@ -126,8 +126,7 @@ def build_list_params(
         _reject("sort_order must be 'asc' or 'desc'")
     if filter_with and filter_with not in VALID_FILTER_OPERATORS:
         _reject(
-            "filter_with must be one of: "
-            + ", ".join(sorted(VALID_FILTER_OPERATORS))
+            "filter_with must be one of: " + ", ".join(sorted(VALID_FILTER_OPERATORS))
         )
     if filter_on and not filter_by:
         _reject("filter_on requires filter_by")
@@ -145,9 +144,7 @@ def build_list_params(
     operator = filter_with or "="
     if filter_by:
         if not filter_on and operator not in VALUELESS_FILTER_OPERATORS:
-            _reject(
-                "filter_by requires filter_on unless filter_with is null/not_null"
-            )
+            _reject("filter_by requires filter_on unless filter_with is null/not_null")
         params["filter_by"] = filter_by
         if filter_on:
             params["filter_on"] = filter_on
@@ -319,21 +316,31 @@ class LawmaticsClient:
             body.update(_compact(extra_fields))
         return self.post("/prospects", body)
 
-    def update_matter(self, matter_id: str, matter_data: dict[str, Any]) -> dict[str, Any]:
+    def update_matter(
+        self, matter_id: str, matter_data: dict[str, Any]
+    ) -> dict[str, Any]:
         return self.put(f"/prospects/{matter_id}", matter_data)
 
     def find_matter(
         self, phone: str = "", email: str = "", name: str = ""
     ) -> dict[str, Any]:
-        supplied = [(key, value) for key, value in {
-            "phone": phone,
-            "email": email,
-            "name": name,
-        }.items() if value]
+        supplied = [
+            (key, value)
+            for key, value in {
+                "phone": phone,
+                "email": email,
+                "name": name,
+            }.items()
+            if value
+        ]
         if len(supplied) != 1:
             _reject("find_matter requires exactly one of phone, email, or name")
         key, value = supplied[0]
-        finder = {"phone": "find_by_phone", "email": "find_by_email", "name": "find_by_name"}[key]
+        finder = {
+            "phone": "find_by_phone",
+            "email": "find_by_email",
+            "name": "find_by_name",
+        }[key]
         return self.get(f"/prospects/{finder}/{quote(value, safe='')}")
 
     # Contacts
@@ -430,9 +437,7 @@ class LawmaticsClient:
         if priority not in TASK_PRIORITIES:
             _reject("priority must be one of: high, medium, low")
         if taskable_type and taskable_type not in TASKABLE_TYPES:
-            _reject(
-                "taskable_type must be one of: Prospect, Contact, Company, Client"
-            )
+            _reject("taskable_type must be one of: Prospect, Contact, Company, Client")
         body = _compact(
             {
                 "name": name,
@@ -536,9 +541,7 @@ class LawmaticsClient:
         if eventable_type and eventable_type not in EVENTABLE_TYPES:
             _reject("eventable_type must be one of: Prospect, Contact, Client")
         if reminder_type and reminder_type not in REMINDER_TYPES:
-            _reject(
-                "reminder_type must be one of: minutes, hours, days, weeks, months"
-            )
+            _reject("reminder_type must be one of: minutes, hours, days, weeks, months")
         body = _compact(
             {
                 "name": name,
@@ -628,9 +631,7 @@ class LawmaticsClient:
         return self.get(f"/forms/{form_uuid}", {"fields": "all"})
 
     def list_form_entries(self, form_uuid: str, page: int = 1) -> dict[str, Any]:
-        return self.get(
-            f"/forms/{form_uuid}/entries", {"page": _validate_page(page)}
-        )
+        return self.get(f"/forms/{form_uuid}/entries", {"page": _validate_page(page)})
 
     def submit_form(
         self,

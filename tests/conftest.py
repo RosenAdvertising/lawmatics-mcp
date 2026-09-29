@@ -76,4 +76,3 @@ def mock_requests(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(requests.sessions.Session, "request", fake_request)
     return calls, enqueue
-

@@ -109,9 +109,7 @@ def test_json_resources_call_the_client_and_return_valid_json(
 )
 def test_prompts_are_non_empty_and_reference_only_registered_tools(prompt, kwargs):
     text = prompt(**kwargs)
-    registered_tools = {
-        tool.name for tool in asyncio.run(server.mcp.list_tools())
-    }
+    registered_tools = {tool.name for tool in asyncio.run(server.mcp.list_tools())}
     referenced_tools = set(re.findall(r"`([a-z][a-z0-9_]*)`", text))
 
     assert text.strip()

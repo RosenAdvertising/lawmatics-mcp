@@ -349,7 +349,14 @@ def create_task(
     """
 
     return _client().create_task(
-        name, description, due_date, user_ids, priority, taskable_type, taskable_id, tag_ids
+        name,
+        description,
+        due_date,
+        user_ids,
+        priority,
+        taskable_type,
+        taskable_id,
+        tag_ids,
     )
 
 
@@ -736,7 +743,9 @@ def submit_form(
         referring_url: Optional referring URL.
     """
 
-    return _client().submit_form(form_uuid, fields, utm_source, utm_campaign, referring_url)
+    return _client().submit_form(
+        form_uuid, fields, utm_source, utm_campaign, referring_url
+    )
 
 
 # ---------------------------------------------------------------------------
