@@ -23,9 +23,10 @@ def main() -> None:
 
     client_id = input("Lawmatics Client ID: ").strip()
     client_secret = getpass("Lawmatics Client Secret: ").strip()
-    redirect_uri = input(
-        f"Redirect URI [{DEFAULT_REDIRECT_URI}]: "
-    ).strip() or DEFAULT_REDIRECT_URI
+    redirect_uri = (
+        input(f"Redirect URI [{DEFAULT_REDIRECT_URI}]: ").strip()
+        or DEFAULT_REDIRECT_URI
+    )
 
     if not client_id or not client_secret:
         print("Error: Client ID and Client Secret are required.", file=sys.stderr)
@@ -56,6 +57,7 @@ def main() -> None:
             "code": code,
             "redirect_uri": redirect_uri,
         },
+        timeout=30,
     )
     if resp.status_code != 200:
         print(f"Token exchange failed ({resp.status_code}).", file=sys.stderr)
