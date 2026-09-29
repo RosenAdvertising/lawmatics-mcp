@@ -90,7 +90,10 @@ def _run_setup() -> None:
         )
         sys.exit(1)
     if resp.status_code != 200:
-        print(f"Token exchange failed ({resp.status_code}).", file=sys.stderr)
+        print(
+            f"Token exchange failed ({resp.status_code}). Check the client credentials and authorization code, then run lawmatics-mcp-setup again.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     try:

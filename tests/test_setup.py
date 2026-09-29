@@ -123,7 +123,10 @@ def test_setup_entrypoint_fake_oauth_rejection_is_masked(monkeypatch, capsys):
         raise AssertionError("setup should fail for a rejected fake OAuth code")
     captured = capsys.readouterr()
     assert request["timeout"] == 30
-    assert "Token exchange failed (401)." in captured.err
+    assert captured.err == (
+        "Token exchange failed (401). Check the client credentials and authorization code, "
+        "then run lawmatics-mcp-setup again.\n"
+    )
     assert "VENDOR-SECRET" not in captured.err
     assert "Traceback" not in captured.err
 
