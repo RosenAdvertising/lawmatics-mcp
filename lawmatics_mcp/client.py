@@ -9,10 +9,24 @@ from typing import Any, NoReturn
 from urllib.parse import quote
 
 import requests
+from mcp.server.mcpserver.exceptions import ToolError
 
 from lawmatics_mcp import credentials
 
 logger = logging.getLogger(__name__)
+
+
+class LawmaticsMissingCredentialsError(ToolError, RuntimeError):
+    """The access token is not configured."""
+
+
+class LawmaticsValidationError(ToolError, ValueError):
+    """A locally detected invalid tool argument with a fixed safe message."""
+
+    def __init__(self, safe_message: str):
+        self.safe_message = safe_message
+        super().__init__(safe_message)
+
 
 BASE_URL = "https://api.lawmatics.com/v1"
 TOKEN_URL = "https://api.lawmatics.com/oauth/token"
@@ -55,7 +69,7 @@ def _reject(reason: str) -> NoReturn:
     """Reject invalid input after recording a PII-free reason."""
 
     logger.warning("Lawmatics validation rejected request: %s", reason)
-    raise ValueError(reason)
+    raise LawmaticsValidationError(reason)
 
 
 def _validate_page(page: int) -> int:
@@ -66,24 +80,79 @@ def _validate_page(page: int) -> int:
     return page
 
 
-class LawmaticsAPIError(RuntimeError):
+class LawmaticsAPIError(ToolError, RuntimeError):
     """Base error for Lawmatics API failures."""
+
+    def __init__(
+        self, status_code: int, safe_reason: str = "request could not be processed"
+    ):
+        self.status_code = status_code
+        self.safe_reason = safe_reason
+        super().__init__(f"Lawmatics API error {status_code}")
 
 
 class LawmaticsAuthError(LawmaticsAPIError):
     """Raised when the stored Lawmatics access token is invalid or revoked."""
+
+    def __init__(self):
+        super().__init__(401, "authentication was rejected")
+        self.args = (
+            "Lawmatics authentication was rejected or expired. Reauthorize with lawmatics-mcp-setup.",
+        )
 
 
 class LawmaticsRateLimitError(LawmaticsAPIError):
     """Raised when Lawmatics returns 429 Too Many Requests."""
 
     def __init__(self, retry_after: str | None):
-        self.retry_after = retry_after or ""
-        suffix = f" Retry-After: {self.retry_after}." if self.retry_after else ""
-        super().__init__(
-            "Lawmatics API rate limit exceeded (50 requests/minute per firm)."
-            f"{suffix} Retry later; this client does not auto-sleep."
+        self.retry_after_seconds = _safe_retry_after(retry_after)
+        super().__init__(429, "rate limit exceeded")
+        hint = (
+            f"Retry after {self.retry_after_seconds} seconds"
+            if self.retry_after_seconds is not None
+            else "Retry later"
         )
+        self.args = (
+            f"Lawmatics rate limit reached. {hint}; this client does not auto-retry.",
+        )
+
+
+def _safe_retry_after(value: str | None) -> int | None:
+    """Accept only numeric Retry-After seconds and cap the client-facing hint."""
+    if value is None or not value.isascii() or not value.isdecimal():
+        return None
+    try:
+        return min(int(value), 3600)
+    except (ValueError, OverflowError):
+        return None
+
+
+_SAFE_VENDOR_REASONS = {
+    "invalid_request": "request parameters were invalid",
+    "validation_error": "request parameters were invalid",
+    "not_found": "the requested record was not found",
+    "resource_not_found": "the requested record was not found",
+    "forbidden": "the account is not allowed to perform this action",
+    "conflict": "the request conflicts with the current record",
+}
+
+
+def _safe_vendor_reason(resp: requests.Response) -> str:
+    """Map only a small set of vendor codes to fixed, reviewed text."""
+    try:
+        payload = resp.json()
+    except (ValueError, TypeError):
+        return "request could not be processed"
+    if not isinstance(payload, dict):
+        return "request could not be processed"
+    error = payload.get("error")
+    candidates = [error, payload.get("code")]
+    if isinstance(error, dict):
+        candidates.extend((error.get("code"), error.get("type")))
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate in _SAFE_VENDOR_REASONS:
+            return _SAFE_VENDOR_REASONS[candidate]
+    return "request could not be processed"
 
 
 def _json_response(resp: requests.Response) -> Any:
@@ -95,7 +164,7 @@ def _json_response(resp: requests.Response) -> Any:
             resp.status_code,
         )
         raise LawmaticsAPIError(
-            f"Lawmatics API returned non-JSON response ({resp.status_code})"
+            resp.status_code, "response was not valid JSON"
         ) from exc
 
 
@@ -174,7 +243,7 @@ class LawmaticsClient:
             logger.warning(
                 "Lawmatics client initialization rejected: access token unavailable"
             )
-            raise RuntimeError(
+            raise LawmaticsMissingCredentialsError(
                 "Lawmatics access token not found. Run: lawmatics-mcp-setup"
             )
         self.session = session or requests.Session()
@@ -201,14 +270,12 @@ class LawmaticsClient:
             json=json_body,
             headers=headers,
         )
-        if resp.status_code == 401:
+        if resp.status_code in (401, 403):
             logger.warning(
                 "Lawmatics API request rejected: authentication failed method=%s",
                 method,
             )
-            raise LawmaticsAuthError(
-                "Lawmatics token revoked/invalid - re-run lawmatics-mcp-setup"
-            )
+            raise LawmaticsAuthError()
         if resp.status_code == 429:
             logger.warning(
                 "Lawmatics API request rejected: rate limited method=%s",
@@ -223,7 +290,7 @@ class LawmaticsClient:
                 resp.status_code,
                 method,
             )
-            raise LawmaticsAPIError(f"Lawmatics API error {resp.status_code}")
+            raise LawmaticsAPIError(resp.status_code, _safe_vendor_reason(resp))
         return _json_response(resp)
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:

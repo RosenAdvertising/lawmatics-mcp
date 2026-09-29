@@ -163,7 +163,7 @@ def test_429_raises_rate_limit_error_with_retry_after_and_no_retry(mock_requests
     calls, enqueue = mock_requests
     enqueue(status_code=429, headers={"Retry-After": "60"}, text="rate limited")
 
-    with pytest.raises(LawmaticsRateLimitError, match="Retry-After: 60"):
+    with pytest.raises(LawmaticsRateLimitError, match="Retry after 60 seconds"):
         LawmaticsClient().get_current_user()
 
     assert len(calls) == 1

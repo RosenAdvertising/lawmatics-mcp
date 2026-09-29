@@ -2,14 +2,116 @@
 """Lawmatics MCP server - 36 confirmed tools for legal CRM and intake."""
 
 import json
+import logging
 from typing import Annotated, Any
 
+import requests
 from mcp.server import MCPServer
-from pydantic import Field
+from mcp.server.context import ServerRequestContext
+from mcp.server.mcpserver.context import Context
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+from mcp.shared.exceptions import MCPError
+from mcp_types import CallToolRequestParams, CallToolResult, TextContent
+from pydantic import Field, ValidationError
 
-from lawmatics_mcp.client import LawmaticsClient
+from lawmatics_mcp.client import (
+    LawmaticsAPIError,
+    LawmaticsAuthError,
+    LawmaticsClient,
+    LawmaticsMissingCredentialsError,
+    LawmaticsRateLimitError,
+    LawmaticsValidationError,
+)
 
-mcp = MCPServer("lawmatics")
+logger = logging.getLogger(__name__)
+
+
+def _expected_shape(prop: dict[str, Any]) -> str:
+    if "anyOf" in prop:
+        return " or ".join(_expected_shape(option) for option in prop["anyOf"])
+    expected = str(prop.get("type", "a value matching the documented schema"))
+    if "minimum" in prop:
+        expected += f" >= {prop['minimum']}"
+    if "maximum" in prop:
+        expected += f" <= {prop['maximum']}"
+    return expected
+
+
+def _validation_message(tool: Any, error: ValidationError) -> str:
+    """Describe only schema-known arguments and expected JSON types."""
+    properties = tool.parameters.get("properties", {}) if tool else {}
+    safe_fields: set[str] = set()
+    for item in error.errors():
+        location = item.get("loc", ())
+        if location and isinstance(location[0], str) and location[0] in properties:
+            safe_fields.add(location[0])
+    if not safe_fields:
+        return "Arguments do not match this tool's documented input schema."
+    parts = []
+    for name in sorted(safe_fields):
+        expected = _expected_shape(properties[name])
+        parts.append(f"'{name}' must be {expected}")
+    return "Invalid arguments: " + "; ".join(parts) + "."
+
+
+def _safe_tool_error(exc: BaseException, tool: Any) -> str | None:
+    """Only the SDK wrapper is unwrapped; unknown causes stay masked."""
+    item = exc.__cause__ if isinstance(exc, ToolError) and exc.__cause__ else exc
+    if (
+        isinstance(exc, ToolError)
+        and not isinstance(exc, UnexpectedToolError)
+        and isinstance(item, ValidationError)
+    ):
+        return _validation_message(tool, item)
+    if isinstance(item, LawmaticsMissingCredentialsError):
+        return "Lawmatics credentials are missing. Run lawmatics-mcp-setup or set LAWMATICS_ACCESS_TOKEN."
+    if isinstance(item, (LawmaticsAuthError, LawmaticsRateLimitError)):
+        return str(item)
+    if isinstance(item, LawmaticsAPIError):
+        if item.status_code == 404:
+            return "The requested Lawmatics record was not found (HTTP 404). Check the record ID."
+        return f"Lawmatics API request failed (HTTP {item.status_code}): {item.safe_reason}."
+    if isinstance(item, LawmaticsValidationError):
+        # _reject uses fixed, source-controlled reason strings.
+        return f"Invalid arguments: {item.safe_message}."
+    if isinstance(item, requests.Timeout):
+        return "Lawmatics request timed out. Retry shortly."
+    if isinstance(item, requests.ConnectionError):
+        return "Could not connect to Lawmatics. Check connectivity and retry."
+    return None
+
+
+class SafeMCPServer(MCPServer):
+    """MCP boundary that keeps SDK exception details and input values private."""
+
+    async def _handle_call_tool(
+        self, ctx: ServerRequestContext[Any], params: CallToolRequestParams
+    ) -> Any:
+        context = Context(
+            request_context=ctx,
+            mcp_server=self,
+            input_params=params,
+            subscriptions=self._subscriptions,
+        )
+        tool = self._tool_manager.get_tool(params.name)
+        try:
+            return await self.call_tool(params.name, params.arguments or {}, context)
+        except MCPError:
+            raise
+        except Exception as exc:
+            message = _safe_tool_error(exc, tool)
+            if message is not None:
+                logger.info("Tool call failed: classified anticipated tool error")
+            else:
+                message = f"Error executing tool {params.name if tool else 'unknown'}"
+                # Never log exc, traceback, or an exception cause at this boundary.
+                logger.error("Tool call failed: classified unexpected tool error")
+            return CallToolResult(
+                content=[TextContent(type="text", text=message)], is_error=True
+            )
+
+
+mcp = SafeMCPServer("lawmatics")
 PageNumber = Annotated[int, Field(ge=1)]
 
 

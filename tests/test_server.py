@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
+import requests
+from mcp_types import CallToolRequestParams
 
 from lawmatics_mcp import server
 
@@ -71,6 +74,128 @@ def test_server_registers_exactly_three_resources_and_prompts():
     }
 
 
+def _call_tool(name: str, arguments: dict | None = None):
+    return asyncio.run(
+        server.mcp._handle_call_tool(
+            cast(Any, None), CallToolRequestParams(name=name, arguments=arguments or {})
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "headers", "payload", "expected"),
+    [
+        (
+            401,
+            {},
+            {},
+            "Lawmatics authentication was rejected or expired. Reauthorize with lawmatics-mcp-setup.",
+        ),
+        (
+            403,
+            {},
+            {},
+            "Lawmatics authentication was rejected or expired. Reauthorize with lawmatics-mcp-setup.",
+        ),
+        (
+            429,
+            {"Retry-After": "60"},
+            {},
+            "Lawmatics rate limit reached. Retry after 60 seconds; this client does not auto-retry.",
+        ),
+        (
+            429,
+            {"Retry-After": "999999"},
+            {},
+            "Lawmatics rate limit reached. Retry after 3600 seconds; this client does not auto-retry.",
+        ),
+        (
+            429,
+            {"Retry-After": "1; https://attacker.invalid/token"},
+            {},
+            "Lawmatics rate limit reached. Retry later; this client does not auto-retry.",
+        ),
+        (
+            404,
+            {},
+            {"error": "not_found"},
+            "The requested Lawmatics record was not found (HTTP 404). Check the record ID.",
+        ),
+        (
+            422,
+            {},
+            {"error": "customer person@example.test Bearer secret-token"},
+            "Lawmatics API request failed (HTTP 422): request could not be processed.",
+        ),
+    ],
+)
+def test_http_failures_are_sanitized_in_actual_tool_result(
+    status, headers, payload, expected, mock_requests
+):
+    _calls, enqueue = mock_requests
+    enqueue(status_code=status, headers=headers, json_data=payload)
+
+    result = _call_tool("get_current_user")
+
+    text = result.content[0].text
+    assert result.is_error is True
+    assert text == expected
+    assert "person@example.test" not in text
+    assert "secret-token" not in text
+    assert "attacker.invalid" not in text
+    assert "Retry-After:" not in text
+
+
+def test_missing_credentials_returns_setup_guidance(monkeypatch):
+    monkeypatch.delenv("LAWMATICS_ACCESS_TOKEN", raising=False)
+
+    result = _call_tool("get_current_user")
+
+    assert result.is_error is True
+    assert result.content[0].text == (
+        "Lawmatics credentials are missing. Run lawmatics-mcp-setup or set LAWMATICS_ACCESS_TOKEN."
+    )
+    assert "private detail" not in result.content[0].text
+
+
+def test_client_validation_is_actionable_and_argument_values_are_hidden(mock_requests):
+    _calls, _enqueue = mock_requests
+    result = _call_tool("list_users", {"sort_order": "person@example.test"})
+
+    assert result.is_error is True
+    assert (
+        result.content[0].text
+        == "Invalid arguments: sort_order must be 'asc' or 'desc'."
+    )
+    assert "person@example.test" not in result.content[0].text
+
+
+def test_pydantic_validation_does_not_echo_input_or_unknown_argument_names():
+    sentinel = "PII-SENTINEL-person@example.test"
+    result = _call_tool("list_users", {"page": sentinel, "attacker-key": sentinel})
+    text = result.content[0].text
+
+    assert result.is_error is True
+    assert text == "Invalid arguments: 'page' must be integer >= 1."
+    assert sentinel not in text
+    assert "attacker-key" not in text
+
+
+def test_unknown_exception_result_and_logs_are_masked(monkeypatch, caplog):
+    sentinel = "UNKNOWN-EXCEPTION-secret-token-person@example.test"
+
+    def crash():
+        raise RuntimeError(sentinel)
+
+    monkeypatch.setattr(server, "_client", crash)
+    result = _call_tool("get_current_user")
+
+    assert result.is_error is True
+    assert result.content[0].text == "Error executing tool get_current_user"
+    assert sentinel not in caplog.text
+    assert "Traceback" not in caplog.text
+
+
 @pytest.mark.parametrize(
     ("resource", "client_method", "expected_call", "payload"),
     [
@@ -115,3 +240,72 @@ def test_prompts_are_non_empty_and_reference_only_registered_tools(prompt, kwarg
     assert text.strip()
     assert referenced_tools
     assert referenced_tools <= registered_tools
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        (
+            {"code": "validation_error", "message": "private@example.test"},
+            "Lawmatics API request failed (HTTP 422): request parameters were invalid.",
+        ),
+        (
+            {"error": {"code": "conflict"}},
+            "Lawmatics API request failed (HTTP 422): the request conflicts with the current record.",
+        ),
+        (
+            {"code": ["private@example.test"], "error": {"code": {"secret": "value"}}},
+            "Lawmatics API request failed (HTTP 422): request could not be processed.",
+        ),
+    ],
+)
+def test_http_reason_allowlist_and_malformed_codes(mock_requests, body, expected):
+    _calls, enqueue = mock_requests
+    enqueue(status_code=422, json_data=body)
+    result = _call_tool("get_current_user")
+    assert result.is_error is True
+    assert result.content[0].text == expected
+
+
+@pytest.mark.parametrize(
+    ("error_type", "expected"),
+    [
+        (requests.Timeout, "Lawmatics request timed out. Retry shortly."),
+        (
+            requests.ConnectionError,
+            "Could not connect to Lawmatics. Check connectivity and retry.",
+        ),
+        (ValueError, "Error executing tool get_current_user"),
+    ],
+)
+def test_transport_failure_and_unknown_valueerror(
+    monkeypatch, caplog, error_type, expected
+):
+    def fail(*_args, **_kwargs):
+        raise error_type("private@example.test token=private")
+
+    monkeypatch.setattr(requests.Session, "request", fail)
+    result = _call_tool("get_current_user")
+    assert result.is_error is True
+    assert result.content[0].text == expected
+    assert "private@example.test" not in caplog.text
+    assert "Traceback" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        (
+            {"estimated_value_cents": "private@example.test"},
+            "Invalid arguments: 'estimated_value_cents' must be integer or null.",
+        ),
+        (
+            {"extra_fields": "private@example.test"},
+            "Invalid arguments: 'extra_fields' must be object or null.",
+        ),
+    ],
+)
+def test_optional_argument_shapes(arguments, expected):
+    result = _call_tool("create_matter", arguments)
+    assert result.is_error is True
+    assert result.content[0].text == expected
