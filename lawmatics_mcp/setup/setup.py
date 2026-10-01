@@ -12,6 +12,7 @@ import requests
 
 from lawmatics_mcp import credentials
 from lawmatics_mcp.client import AUTHORIZE_URL, DEFAULT_REDIRECT_URI, TOKEN_URL
+from lawmatics_mcp.oauth_callback import LoopbackCallback, new_state, validate_redirect
 
 
 def _run_setup() -> None:
@@ -39,24 +40,31 @@ def _run_setup() -> None:
         print("Error: Client ID and Client Secret are required.", file=sys.stderr)
         sys.exit(1)
 
-    auth_params = {
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-    }
-    auth_url = f"{AUTHORIZE_URL}?{urlencode(auth_params)}"
-    print()
-    print("Open this URL, approve the app, then paste the returned code:")
-    print(auth_url)
-    print()
-
     try:
-        code = input("Authorization code: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print("Error: authorization code is required.", file=sys.stderr)
+        validate_redirect(redirect_uri)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
-    if not code:
-        print("Error: authorization code is required.", file=sys.stderr)
+
+    state = new_state()
+    try:
+        with LoopbackCallback(redirect_uri, state) as callback:
+            auth_params = {
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "response_type": "code",
+                "state": state,
+            }
+            auth_url = f"{AUTHORIZE_URL}?{urlencode(auth_params)}"
+            print("Register this exact redirect URI with the vendor:", redirect_uri)
+            print("Open this URL and approve the app:")
+            print(auth_url)
+            code = callback.receive()
+    except (OSError, ValueError):
+        print(
+            "Error: could not receive a valid OAuth callback. Check the registered redirect and restart setup.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     try:
@@ -70,6 +78,7 @@ def _run_setup() -> None:
                 "redirect_uri": redirect_uri,
             },
             timeout=30,
+            allow_redirects=False,
         )
     except (requests.Timeout, requests.ConnectionError):
         print(

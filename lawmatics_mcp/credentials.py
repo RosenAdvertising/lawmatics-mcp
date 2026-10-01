@@ -14,6 +14,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from lawmatics_mcp.private_storage import atomic_private_write
+
 SERVICE_NAME = "lawmatics-mcp"
 CONFIG_DIR_ENV = "LAWMATICS_MCP_CONFIG_DIR"
 
@@ -54,20 +56,10 @@ def _parse_env_file(path: Path | None = None) -> dict[str, str]:
 
 
 def _write_env_file(values: dict[str, str], path: Path | None = None) -> None:
-    """Write the .env file with 0600 permissions inside a 0700 directory."""
-
+    """Atomically write a private fallback file, or fail without writing secrets."""
     path = path or env_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        path.parent.chmod(0o700)
-    except OSError:
-        pass
     lines = [f"{key}={value}" for key, value in values.items()]
-    path.write_text("\n".join(lines) + ("\n" if lines else ""))
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    atomic_private_write(path, "\n".join(lines) + ("\n" if lines else ""))
 
 
 def load_into_environ(keys: Iterable[str]) -> None:

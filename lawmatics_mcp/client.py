@@ -62,7 +62,7 @@ class LawmaticsValidationError(ToolError, ValueError):
 BASE_URL = "https://api.lawmatics.com/v1"
 TOKEN_URL = "https://api.lawmatics.com/oauth/token"
 AUTHORIZE_URL = "https://app.lawmatics.com/oauth/authorize"
-DEFAULT_REDIRECT_URI = "http://localhost:8124/callback"
+DEFAULT_REDIRECT_URI = "http://127.0.0.1:8124/callback"
 
 ENV_KEYS = [
     "LAWMATICS_CLIENT_ID",
@@ -427,11 +427,15 @@ class LawmaticsClient:
         )
         if extra_fields:
             body.update(_compact(extra_fields))
+        if not body:
+            raise LawmaticsValidationError("Supply at least one matter field.")
         return self.post("/prospects", body)
 
     def update_matter(
         self, matter_id: str, matter_data: dict[str, Any]
     ) -> dict[str, Any]:
+        if not matter_data:
+            raise LawmaticsValidationError("Supply at least one update field.")
         return self.put(f"/prospects/{_path_id(matter_id, 'matter_id')}", matter_data)
 
     def find_matter(
@@ -503,6 +507,8 @@ class LawmaticsClient:
     def update_contact(
         self, contact_id: str, contact_data: dict[str, Any]
     ) -> dict[str, Any]:
+        if not contact_data:
+            raise LawmaticsValidationError("Supply at least one update field.")
         return self.put(f"/contacts/{_path_id(contact_id, 'contact_id')}", contact_data)
 
     # Tasks
@@ -571,6 +577,8 @@ class LawmaticsClient:
         return self.post("/tasks", body)
 
     def update_task(self, task_id: str, task_data: dict[str, Any]) -> dict[str, Any]:
+        if not task_data:
+            raise LawmaticsValidationError("Supply at least one update field.")
         return self.put(f"/tasks/{_path_id(task_id, 'task_id')}", task_data)
 
     def complete_task(self, task_id: str) -> dict[str, Any]:
@@ -619,6 +627,8 @@ class LawmaticsClient:
         )
 
     def update_note(self, note_id: str, note_data: dict[str, Any]) -> dict[str, Any]:
+        if not note_data:
+            raise LawmaticsValidationError("Supply at least one update field.")
         return self.put(f"/notes/{_path_id(note_id, 'note_id')}", note_data)
 
     # Events
@@ -683,6 +693,8 @@ class LawmaticsClient:
         return self.post("/events", body)
 
     def update_event(self, event_id: str, event_data: dict[str, Any]) -> dict[str, Any]:
+        if not event_data:
+            raise LawmaticsValidationError("Supply at least one update field.")
         return self.put(f"/events/{_path_id(event_id, 'event_id')}", event_data)
 
     # Custom fields

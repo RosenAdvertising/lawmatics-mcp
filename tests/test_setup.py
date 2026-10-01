@@ -16,7 +16,7 @@ def test_oauth_token_exchange_uses_a_finite_timeout(monkeypatch) -> None:
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(prompts))
     monkeypatch.setattr(setup, "getpass", lambda _prompt="": "client-secret")
 
-    def post(url: str, *, data: dict[str, str], timeout: int):
+    def post(url: str, *, data: dict[str, str], timeout: int, allow_redirects: bool):
         request.update(url=url, data=data, timeout=timeout)
         return SimpleNamespace(status_code=200, json=lambda: {"access_token": "token"})
 
@@ -110,7 +110,7 @@ def test_setup_entrypoint_fake_oauth_rejection_is_masked(monkeypatch, capsys):
     monkeypatch.setattr("builtins.input", lambda *_args: next(prompts))
     monkeypatch.setattr(setup, "getpass", lambda *_args: "fake-client-secret")
 
-    def rejected(url, *, data, timeout):
+    def rejected(url, *, data, timeout, allow_redirects):
         request.update(url=url, data=data, timeout=timeout)
         return SimpleNamespace(status_code=401, text="VENDOR-SECRET https://evil.test")
 
@@ -180,3 +180,20 @@ def test_setup_permission_and_malformed_response_are_safe(
         setup.main()
     assert error.value.code == 1
     assert capsys.readouterr().err == expected + "\n"
+
+
+@pytest.fixture(autouse=True)
+def validated_callback_for_token_exchange_tests(monkeypatch):
+    callback = SimpleNamespace(receive=lambda: "dummy-code")
+
+    class BoundCallback:
+        def __init__(self, *args):
+            pass
+
+        def __enter__(self):
+            return callback
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(setup, "LoopbackCallback", BoundCallback)
