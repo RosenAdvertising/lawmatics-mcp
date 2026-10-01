@@ -73,9 +73,9 @@ pip install dist/lawmatics_mcp-0.1.0-py3-none-any.whl
 
 Lawmatics tokens are non-expiring bearer tokens. There is no refresh token and no refresh flow. If a token is revoked or invalid, re-run `lawmatics-mcp-setup`.
 
-On Windows, credential/token file storage is not supported because private-file
-writes require `os.fchmod`. This server has no OS credential-store integration;
-setup persistence therefore requires a supported platform.
+On Windows, the file is stored in the user's profile and protected by Windows'
+default per-user access rules. On POSIX, files are created with `0600` permissions
+and writes fail closed if private permissions cannot be established.
 
 ## Claude Desktop
 
