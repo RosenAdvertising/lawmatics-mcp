@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any, NoReturn
 from urllib.parse import quote
 
@@ -14,6 +15,36 @@ from mcp.server.mcpserver.exceptions import ToolError
 from lawmatics_mcp import credentials
 
 logger = logging.getLogger(__name__)
+
+
+def _path_id(value, parameter: str) -> str:
+    """Validate a plain identifier before URL quoting or any HTTP request."""
+    expected = (
+        "a non-empty plain identifier (ASCII letters, digits, -, _, ., ~); not . or .."
+    )
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (str, int))
+        or str(value) in {".", ".."}
+        or re.fullmatch(r"[A-Za-z0-9._~-]+", str(value)) is None
+    ):
+        message = f"Invalid argument '{parameter}': use {expected}."
+        raise LawmaticsValidationError(message)
+    return quote(str(value), safe="")
+
+
+def _path_value(value: str, parameter: str) -> str:
+    """Keep finder text usable without accepting path syntax or encoded input."""
+    if (
+        not value
+        or value in {".", ".."}
+        or any(ch in value for ch in "/\\%?#")
+        or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+    ):
+        raise LawmaticsValidationError(
+            f"Invalid argument '{parameter}': use plain search text without path separators or percent encoding."
+        )
+    return quote(value, safe="")
 
 
 class LawmaticsMissingCredentialsError(ToolError, RuntimeError):
@@ -336,7 +367,7 @@ class LawmaticsClient:
 
     def get_user(self, user_id: str, fields: str = "") -> dict[str, Any]:
         return self.get(
-            f"/users/{quote(str(user_id), safe='')}", build_fields_params(fields)
+            f"/users/{_path_id(user_id, 'user_id')}", build_fields_params(fields)
         )
 
     # Matters: Lawmatics API resource is /prospects.
@@ -360,7 +391,8 @@ class LawmaticsClient:
 
     def get_matter(self, matter_id: str, fields: str = "") -> dict[str, Any]:
         return self.get(
-            f"/prospects/{quote(str(matter_id), safe='')}", build_fields_params(fields)
+            f"/prospects/{_path_id(matter_id, 'matter_id')}",
+            build_fields_params(fields),
         )
 
     def create_matter(
@@ -400,7 +432,7 @@ class LawmaticsClient:
     def update_matter(
         self, matter_id: str, matter_data: dict[str, Any]
     ) -> dict[str, Any]:
-        return self.put(f"/prospects/{quote(str(matter_id), safe='')}", matter_data)
+        return self.put(f"/prospects/{_path_id(matter_id, 'matter_id')}", matter_data)
 
     def find_matter(
         self, phone: str = "", email: str = "", name: str = ""
@@ -422,7 +454,7 @@ class LawmaticsClient:
             "email": "find_by_email",
             "name": "find_by_name",
         }[key]
-        return self.get(f"/prospects/{finder}/{quote(str(value), safe='')}")
+        return self.get(f"/prospects/{finder}/{_path_value(value, key)}")
 
     # Contacts
 
@@ -445,7 +477,8 @@ class LawmaticsClient:
 
     def get_contact(self, contact_id: str, fields: str = "") -> dict[str, Any]:
         return self.get(
-            f"/contacts/{quote(str(contact_id), safe='')}", build_fields_params(fields)
+            f"/contacts/{_path_id(contact_id, 'contact_id')}",
+            build_fields_params(fields),
         )
 
     def create_contact(
@@ -470,7 +503,7 @@ class LawmaticsClient:
     def update_contact(
         self, contact_id: str, contact_data: dict[str, Any]
     ) -> dict[str, Any]:
-        return self.put(f"/contacts/{quote(str(contact_id), safe='')}", contact_data)
+        return self.put(f"/contacts/{_path_id(contact_id, 'contact_id')}", contact_data)
 
     # Tasks
 
@@ -505,7 +538,7 @@ class LawmaticsClient:
 
     def get_task(self, task_id: str, fields: str = "") -> dict[str, Any]:
         return self.get(
-            f"/tasks/{quote(str(task_id), safe='')}", build_fields_params(fields)
+            f"/tasks/{_path_id(task_id, 'task_id')}", build_fields_params(fields)
         )
 
     def create_task(
@@ -538,10 +571,10 @@ class LawmaticsClient:
         return self.post("/tasks", body)
 
     def update_task(self, task_id: str, task_data: dict[str, Any]) -> dict[str, Any]:
-        return self.put(f"/tasks/{quote(str(task_id), safe='')}", task_data)
+        return self.put(f"/tasks/{_path_id(task_id, 'task_id')}", task_data)
 
     def complete_task(self, task_id: str) -> dict[str, Any]:
-        return self.put(f"/tasks/{quote(str(task_id), safe='')}", {"done": True})
+        return self.put(f"/tasks/{_path_id(task_id, 'task_id')}", {"done": True})
 
     def list_task_statuses(self) -> dict[str, Any]:
         return self.get("/task_statuses")
@@ -567,7 +600,7 @@ class LawmaticsClient:
 
     def get_note(self, note_id: str, fields: str = "") -> dict[str, Any]:
         return self.get(
-            f"/notes/{quote(str(note_id), safe='')}", build_fields_params(fields)
+            f"/notes/{_path_id(note_id, 'note_id')}", build_fields_params(fields)
         )
 
     def create_note(
@@ -586,7 +619,7 @@ class LawmaticsClient:
         )
 
     def update_note(self, note_id: str, note_data: dict[str, Any]) -> dict[str, Any]:
-        return self.put(f"/notes/{quote(str(note_id), safe='')}", note_data)
+        return self.put(f"/notes/{_path_id(note_id, 'note_id')}", note_data)
 
     # Events
 
@@ -609,7 +642,7 @@ class LawmaticsClient:
 
     def get_event(self, event_id: str, fields: str = "") -> dict[str, Any]:
         return self.get(
-            f"/events/{quote(str(event_id), safe='')}", build_fields_params(fields)
+            f"/events/{_path_id(event_id, 'event_id')}", build_fields_params(fields)
         )
 
     def create_event(
@@ -650,7 +683,7 @@ class LawmaticsClient:
         return self.post("/events", body)
 
     def update_event(self, event_id: str, event_data: dict[str, Any]) -> dict[str, Any]:
-        return self.put(f"/events/{quote(str(event_id), safe='')}", event_data)
+        return self.put(f"/events/{_path_id(event_id, 'event_id')}", event_data)
 
     # Custom fields
 
@@ -661,7 +694,9 @@ class LawmaticsClient:
         )
 
     def get_custom_field(self, custom_field_id: str) -> dict[str, Any]:
-        return self.get(f"/custom_fields/{quote(str(custom_field_id), safe='')}")
+        return self.get(
+            f"/custom_fields/{_path_id(custom_field_id, 'custom_field_id')}"
+        )
 
     # Interactions
 
@@ -709,7 +744,9 @@ class LawmaticsClient:
         return self.get("/custom_emails", {"page": _validate_page(page)})
 
     def get_custom_email(self, custom_email_id: str) -> dict[str, Any]:
-        return self.get(f"/custom_emails/{quote(str(custom_email_id), safe='')}")
+        return self.get(
+            f"/custom_emails/{_path_id(custom_email_id, 'custom_email_id')}"
+        )
 
     # Forms
 
@@ -717,11 +754,11 @@ class LawmaticsClient:
         return self.get("/forms", {"page": _validate_page(page)})
 
     def get_form(self, form_uuid: str) -> dict[str, Any]:
-        return self.get(f"/forms/{quote(str(form_uuid), safe='')}", {"fields": "all"})
+        return self.get(f"/forms/{_path_id(form_uuid, 'form_uuid')}", {"fields": "all"})
 
     def list_form_entries(self, form_uuid: str, page: int = 1) -> dict[str, Any]:
         return self.get(
-            f"/forms/{quote(str(form_uuid), safe='')}/entries",
+            f"/forms/{_path_id(form_uuid, 'form_uuid')}/entries",
             {"page": _validate_page(page)},
         )
 
@@ -744,5 +781,5 @@ class LawmaticsClient:
             )
         )
         return self.post(
-            f"/forms/{quote(str(form_uuid), safe='')}/submit", body, auth=False
+            f"/forms/{_path_id(form_uuid, 'form_uuid')}/submit", body, auth=False
         )

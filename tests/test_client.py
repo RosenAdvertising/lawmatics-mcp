@@ -118,10 +118,10 @@ def test_find_matter_requires_exactly_one_value_and_uses_encoded_paths(mock_requ
 @pytest.mark.parametrize(
     ("identifier", "encoded"),
     [
-        ("../x", "..%2Fx"),
-        ("x?secret", "x%3Fsecret"),
-        ("x#fragment", "x%23fragment"),
-        ("a/b", "a%2Fb"),
+        ("normal-id", "normal-id"),
+        ("abc_123", "abc_123"),
+        ("record.123", "record.123"),
+        ("abc~123", "abc~123"),
     ],
 )
 def test_string_identifiers_are_confined_to_one_encoded_path_segment(
