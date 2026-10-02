@@ -2,13 +2,159 @@
 """Lawmatics MCP server - 36 confirmed tools for legal CRM and intake."""
 
 import json
-from typing import Any
+import logging
+from typing import Annotated, Any
 
-from mcp.server.fastmcp import FastMCP
+import requests
+from mcp.server import MCPServer
+from mcp.server.mcpserver.context import Context
+from mcp.server.mcpserver.exceptions import (
+    ResourceError,
+    ToolError,
+    UnexpectedToolError,
+)
+from mcp.shared.exceptions import MCPError
+from pydantic import Field, ValidationError
 
-from lawmatics_mcp.client import LawmaticsClient
+from lawmatics_mcp.client import (
+    LawmaticsAPIError,
+    LawmaticsAuthError,
+    LawmaticsClient,
+    LawmaticsMissingCredentialsError,
+    LawmaticsRateLimitError,
+    LawmaticsValidationError,
+)
 
-mcp = FastMCP("lawmatics")
+logger = logging.getLogger(__name__)
+
+
+def _expected_shape(prop: dict[str, Any]) -> str:
+    if "anyOf" in prop:
+        return " or ".join(_expected_shape(option) for option in prop["anyOf"])
+    expected = str(prop.get("type", "a value matching the documented schema"))
+    if "minimum" in prop:
+        expected += f" >= {prop['minimum']}"
+    if "maximum" in prop:
+        expected += f" <= {prop['maximum']}"
+    return expected
+
+
+def _validation_message(tool: Any, error: ValidationError) -> str:
+    """Describe only schema-known arguments and expected JSON types."""
+    properties = tool.parameters.get("properties", {}) if tool else {}
+    safe_fields: set[str] = set()
+    for item in error.errors():
+        location = item.get("loc", ())
+        if location and isinstance(location[0], str) and location[0] in properties:
+            safe_fields.add(location[0])
+    if not safe_fields:
+        return "Arguments do not match this tool's documented input schema."
+    parts = []
+    for name in sorted(safe_fields):
+        expected = _expected_shape(properties[name])
+        parts.append(f"'{name}' must be {expected}")
+    return "Invalid arguments: " + "; ".join(parts) + "."
+
+
+_WRITE_TOOLS = {
+    "create_matter",
+    "update_matter",
+    "create_contact",
+    "update_contact",
+    "create_task",
+    "update_task",
+    "complete_task",
+    "create_note",
+    "update_note",
+    "create_event",
+    "update_event",
+    "create_interaction",
+    "submit_form",
+}
+
+
+def _safe_tool_error(exc: BaseException, tool: Any, tool_name: str = "") -> str | None:
+    """Only the SDK wrapper is unwrapped; unknown causes stay masked."""
+    known_wrapped_types = (
+        ValidationError,
+        LawmaticsMissingCredentialsError,
+        LawmaticsAuthError,
+        LawmaticsRateLimitError,
+        LawmaticsAPIError,
+        LawmaticsValidationError,
+        requests.Timeout,
+        requests.ConnectionError,
+    )
+    known_sdk_cause = isinstance(exc.__cause__, known_wrapped_types)
+    item = (
+        exc.__cause__
+        if (
+            type(exc) is UnexpectedToolError
+            or (type(exc) is ToolError and known_sdk_cause)
+        )
+        and exc.__cause__ is not None
+        else exc
+    )
+    if (
+        isinstance(exc, ToolError)
+        and not isinstance(exc, UnexpectedToolError)
+        and isinstance(item, ValidationError)
+    ):
+        return _validation_message(tool, item)
+    if isinstance(item, LawmaticsMissingCredentialsError):
+        return "Lawmatics credentials are missing. Run lawmatics-mcp-setup or set LAWMATICS_ACCESS_TOKEN."
+    if isinstance(item, LawmaticsAuthError):
+        return str(item)
+    if isinstance(item, LawmaticsRateLimitError):
+        delay = item.retry_after_seconds
+        if delay is not None:
+            return f"Lawmatics rate limit reached. Retry after {delay} seconds; this client does not auto-retry."
+        return "Lawmatics rate limit reached. Retry later; this client does not auto-retry."
+    if isinstance(item, LawmaticsAPIError):
+        if item.status_code == 404:
+            return "The requested Lawmatics record was not found (HTTP 404). Check the record ID."
+        return f"Lawmatics API request failed (HTTP {item.status_code}): {item.safe_reason}."
+    if isinstance(item, LawmaticsValidationError):
+        # _reject uses fixed, source-controlled reason strings.
+        return f"Invalid arguments: {item.safe_message}."
+    if isinstance(item, requests.Timeout):
+        if tool_name in _WRITE_TOOLS:
+            return "Lawmatics request timed out. The outcome is unknown; check whether the change completed before retrying."
+        return (
+            "Lawmatics request timed out. Retry the read when the service is available."
+        )
+    if isinstance(item, requests.ConnectionError):
+        if tool_name in _WRITE_TOOLS:
+            return "Could not connect to Lawmatics. The outcome is unknown; check whether the change completed before retrying."
+        return (
+            "Could not connect to Lawmatics. Check connectivity, then retry the read."
+        )
+    return None
+
+
+class SafeMCPServer(MCPServer):
+    """MCP boundary that keeps SDK exception details and input values private."""
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any], context: Context | None = None
+    ) -> Any:
+        tool = self._tool_manager.get_tool(name)
+        try:
+            return await super().call_tool(name, arguments, context)
+        except MCPError:
+            raise
+        except Exception as exc:
+            message = _safe_tool_error(exc, tool, name)
+            if message is None:
+                message = f"Error executing tool {name if tool else 'unknown'}"
+                logger.error("Tool call failed: classified unexpected tool error")
+            else:
+                logger.info("Tool call failed: classified anticipated tool error")
+            raise ToolError(message) from None
+
+
+mcp = SafeMCPServer("lawmatics")
+PageNumber = Annotated[int, Field(ge=1)]
 
 
 def _client() -> LawmaticsClient:
@@ -29,7 +175,7 @@ def get_current_user() -> dict[str, Any]:
 
 @mcp.tool()
 def list_users(
-    page: int = 1,
+    page: PageNumber = 1,
     fields: str = "",
     sort_by: str = "",
     sort_order: str = "",
@@ -73,7 +219,7 @@ def get_user(user_id: str, fields: str = "") -> dict[str, Any]:
 
 @mcp.tool()
 def list_matters(
-    page: int = 1,
+    page: PageNumber = 1,
     fields: str = "",
     sort_by: str = "",
     sort_order: str = "",
@@ -190,7 +336,7 @@ def find_matter(phone: str = "", email: str = "", name: str = "") -> dict[str, A
 
 @mcp.tool()
 def list_contacts(
-    page: int = 1,
+    page: PageNumber = 1,
     fields: str = "",
     sort_by: str = "",
     sort_order: str = "",
@@ -271,7 +417,7 @@ def list_tasks(
     contact_id: str = "",
     company_id: str = "",
     user_id: str = "",
-    page: int = 1,
+    page: PageNumber = 1,
     fields: str = "",
     sort_by: str = "",
     sort_order: str = "",
@@ -347,7 +493,14 @@ def create_task(
     """
 
     return _client().create_task(
-        name, description, due_date, user_ids, priority, taskable_type, taskable_id, tag_ids
+        name,
+        description,
+        due_date,
+        user_ids,
+        priority,
+        taskable_type,
+        taskable_id,
+        tag_ids,
     )
 
 
@@ -388,7 +541,7 @@ def list_task_statuses() -> dict[str, Any]:
 
 @mcp.tool()
 def list_notes(
-    page: int = 1,
+    page: PageNumber = 1,
     fields: str = "",
     sort_by: str = "",
     sort_order: str = "",
@@ -463,7 +616,7 @@ def update_note(note_id: str, note_data: dict[str, Any]) -> dict[str, Any]:
 
 @mcp.tool()
 def list_events(
-    page: int = 1,
+    page: PageNumber = 1,
     fields: str = "",
     sort_by: str = "",
     sort_order: str = "",
@@ -566,7 +719,7 @@ def update_event(event_id: str, event_data: dict[str, Any]) -> dict[str, Any]:
 
 
 @mcp.tool()
-def list_custom_fields(fields: str = "all", page: int = 1) -> dict[str, Any]:
+def list_custom_fields(fields: str = "all", page: PageNumber = 1) -> dict[str, Any]:
     """List custom fields.
 
     Args:
@@ -595,7 +748,7 @@ def get_custom_field(custom_field_id: str) -> dict[str, Any]:
 
 @mcp.tool()
 def list_interactions(
-    page: int = 1,
+    page: PageNumber = 1,
     fields: str = "",
     sort_by: str = "",
     sort_order: str = "",
@@ -656,7 +809,7 @@ def create_interaction(
 
 
 @mcp.tool()
-def list_custom_emails(page: int = 1) -> dict[str, Any]:
+def list_custom_emails(page: PageNumber = 1) -> dict[str, Any]:
     """List custom email templates and campaign stats.
 
     Args:
@@ -683,7 +836,7 @@ def get_custom_email(custom_email_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def list_forms(page: int = 1) -> dict[str, Any]:
+def list_forms(page: PageNumber = 1) -> dict[str, Any]:
     """List custom forms.
 
     Args:
@@ -705,7 +858,7 @@ def get_form(form_uuid: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def list_form_entries(form_uuid: str, page: int = 1) -> dict[str, Any]:
+def list_form_entries(form_uuid: str, page: PageNumber = 1) -> dict[str, Any]:
     """List entries submitted for a custom form.
 
     Args:
@@ -734,7 +887,9 @@ def submit_form(
         referring_url: Optional referring URL.
     """
 
-    return _client().submit_form(form_uuid, fields, utm_source, utm_campaign, referring_url)
+    return _client().submit_form(
+        form_uuid, fields, utm_source, utm_campaign, referring_url
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -746,14 +901,28 @@ def submit_form(
 def users_resource() -> str:
     """Firm users configured in Lawmatics — read-only reference data."""
 
-    return json.dumps(_client().list_users(page=1, fields="all"), indent=2)
+    try:
+        return json.dumps(_client().list_users(page=1, fields="all"), indent=2)
+    except Exception as exc:
+        message = (
+            _safe_tool_error(exc, None)
+            or "Unable to read Lawmatics users. Check the connection and authorization."
+        )
+        raise ResourceError(message) from None
 
 
 @mcp.resource("lawmatics://custom-fields", mime_type="application/json")
 def custom_fields_resource() -> str:
     """Lawmatics custom-field definitions — read-only CRM metadata."""
 
-    return json.dumps(_client().list_custom_fields(fields="all", page=1), indent=2)
+    try:
+        return json.dumps(_client().list_custom_fields(fields="all", page=1), indent=2)
+    except Exception as exc:
+        message = (
+            _safe_tool_error(exc, None)
+            or "Unable to read Lawmatics custom fields. Check the connection and authorization."
+        )
+        raise ResourceError(message) from None
 
 
 @mcp.resource("lawmatics://security-notes", mime_type="text/markdown")
