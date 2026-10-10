@@ -1047,11 +1047,11 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 def _requested_transport() -> str:
-    return os.environ.get("LAWMATICS_MCP_TRANSPORT", "stdio").strip().lower()
+    return os.environ.get("LAWMATICS_MCP_TRANSPORT", "stdio").strip().lower() or "stdio"
 
 
 def _host() -> str:
-    return os.environ.get("LAWMATICS_MCP_HOST", "127.0.0.1").strip()
+    return os.environ.get("LAWMATICS_MCP_HOST", "127.0.0.1").strip() or "127.0.0.1"
 
 
 def _port() -> int:

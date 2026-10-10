@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx2 as httpx
@@ -296,3 +300,63 @@ def test_stateless_lifespan_runs_once_for_two_requests(monkeypatch) -> None:
 
     asyncio.run(two_requests())
     assert events == ["enter", "exit"]
+
+
+def test_empty_transport_selects_stdio(monkeypatch) -> None:
+    """A set-but-empty or whitespace LAWMATICS_MCP_TRANSPORT means stdio (F3)."""
+    ran: list[str] = []
+    monkeypatch.setattr(server.mcp, "run", lambda *args, **kwargs: ran.append("stdio"))
+    for value in ("", "   "):
+        monkeypatch.setenv("LAWMATICS_MCP_TRANSPORT", value)
+        assert server._requested_transport() == "stdio"
+        server.main()
+    assert ran == ["stdio", "stdio"]
+
+
+def test_empty_host_yields_loopback_and_never_reaches_uvicorn(monkeypatch) -> None:
+    """A set-but-empty or whitespace LAWMATICS_MCP_HOST means 127.0.0.1 (F4)."""
+    monkeypatch.delenv("LAWMATICS_MCP_ALLOWED_HOSTS", raising=False)
+    for value in ("", "   "):
+        monkeypatch.setenv("LAWMATICS_MCP_HOST", value)
+        assert server._host() == "127.0.0.1"
+        assert server._transport_security() is None
+
+
+def test_uppercase_localhost_host_is_not_loopback(monkeypatch) -> None:
+    """_host() keeps spelling; LOCALHOST is non-loopback and fails closed (F7)."""
+    monkeypatch.setenv("LAWMATICS_MCP_HOST", "LOCALHOST")
+    monkeypatch.delenv("LAWMATICS_MCP_ALLOWED_HOSTS", raising=False)
+    assert server._host() == "LOCALHOST"
+    with pytest.raises(SystemExit, match="LAWMATICS_MCP_ALLOWED_HOSTS"):
+        server.create_serve_app()
+
+
+def test_import_succeeds_with_missing_distribution() -> None:
+    """Import must survive when the lawmatics distribution is not installed (F8)."""
+    repo_root = Path(__file__).resolve().parent.parent
+    code = (
+        "import importlib.metadata\n"
+        "_real_version = importlib.metadata.version\n"
+        "def _raise(name):\n"
+        "    if name in ('lawmatics-mcp', 'lawmatics_mcp'):\n"
+        "        raise importlib.metadata.PackageNotFoundError(name)\n"
+        "    return _real_version(name)\n"
+        "importlib.metadata.version = _raise\n"
+        "import lawmatics_mcp.server\n"
+        "print('server-imported')\n"
+    )
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(repo_root),
+        "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+        env=env,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "server-imported" in result.stdout
