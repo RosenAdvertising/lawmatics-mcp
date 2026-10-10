@@ -3,6 +3,7 @@
 
 import json
 import logging
+import os
 from typing import Annotated, Any
 
 import requests
@@ -13,9 +14,11 @@ from mcp.server.mcpserver.exceptions import (
     ToolError,
     UnexpectedToolError,
 )
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import MCPError
 from pydantic import Field, ValidationError
 
+from lawmatics_mcp import __version__
 from lawmatics_mcp.client import (
     LawmaticsAPIError,
     LawmaticsAuthError,
@@ -153,7 +156,7 @@ class SafeMCPServer(MCPServer):
             raise ToolError(message) from None
 
 
-mcp = SafeMCPServer("lawmatics")
+mcp = SafeMCPServer("lawmatics", title="Lawmatics", version=__version__)
 PageNumber = Annotated[int, Field(ge=1)]
 
 
@@ -1039,8 +1042,84 @@ def sweep_stale_follow_ups(days_stale: int = 7) -> str:
 """
 
 
+STREAMABLE_HTTP_TRANSPORT = "streamable-http"
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _requested_transport() -> str:
+    return os.environ.get("LAWMATICS_MCP_TRANSPORT", "stdio").strip().lower()
+
+
+def _host() -> str:
+    return os.environ.get("LAWMATICS_MCP_HOST", "127.0.0.1").strip()
+
+
+def _port() -> int:
+    raw = os.environ.get("PORT", "8080").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        raise SystemExit(f"PORT must be an integer (got {raw!r}).") from None
+
+
+def _csv_env(name: str) -> list[str]:
+    return [
+        part.strip() for part in os.environ.get(name, "").split(",") if part.strip()
+    ]
+
+
+def _transport_security() -> TransportSecuritySettings | None:
+    """Origin checks are required off loopback; the SDK covers loopback itself."""
+
+    if _host() in _LOOPBACK_HOSTS:
+        return None
+    allowed_hosts = _csv_env("LAWMATICS_MCP_ALLOWED_HOSTS")
+    if not allowed_hosts:
+        raise SystemExit(
+            "LAWMATICS_MCP_HOST is not a loopback address; "
+            "set LAWMATICS_MCP_ALLOWED_HOSTS to a comma-separated Host allowlist."
+        )
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=_csv_env("LAWMATICS_MCP_ALLOWED_ORIGINS"),
+    )
+
+
+def create_serve_app():
+    """Stateless Streamable HTTP app. SSE stays the default so disconnects cancel work."""
+
+    return mcp.streamable_http_app(
+        streamable_http_path="/mcp",
+        host=_host(),
+        stateless_http=True,
+        transport_security=_transport_security(),
+    )
+
+
+def _serve_streamable_http() -> None:
+    import uvicorn
+
+    config = uvicorn.Config(
+        create_serve_app(),
+        host=_host(),
+        port=_port(),
+        access_log=False,
+    )
+    uvicorn.Server(config).run()
+
+
 def main() -> None:
-    mcp.run()
+    transport = _requested_transport()
+    if transport == "stdio":
+        mcp.run()
+        return
+    if transport == STREAMABLE_HTTP_TRANSPORT:
+        _serve_streamable_http()
+        return
+    raise SystemExit(
+        f"LAWMATICS_MCP_TRANSPORT must be stdio or streamable-http (got {transport!r})."
+    )
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ MCP server for Lawmatics legal CRM and intake. It exposes the confirmed v0.1 API
 ## Requirements
 
 - Python 3.10+
-- MCP Python SDK 2.x (`mcp>=2.2,<3`)
+- MCP Python SDK 2.x (`mcp>=2.3,<3`)
 - A Lawmatics developer app
 - Developer Settings enabled by Lawmatics support: contact `support@lawmatics.com`
 - Claude Desktop or another MCP-compatible client
@@ -92,6 +92,28 @@ Add this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```
 
 Restart Claude Desktop after saving the config.
+
+## HTTP mode
+
+Stdio stays the default. Set `LAWMATICS_MCP_TRANSPORT=streamable-http` to serve the MCP 2026-07-28 stateless Streamable HTTP endpoint at `/mcp`. Vendor credentials are the same environment variables as stdio (or `~/.lawmatics-mcp/.env`). They are never taken from the HTTP request.
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `LAWMATICS_MCP_TRANSPORT` | `stdio` or `streamable-http` | `stdio` |
+| `LAWMATICS_MCP_HOST` | Bind address. A non-loopback address requires `LAWMATICS_MCP_ALLOWED_HOSTS`. | `127.0.0.1` |
+| `PORT` | Bind port. Must be an integer. | `8080` |
+| `LAWMATICS_MCP_ALLOWED_HOSTS` | Comma-separated `Host` allowlist. Required when the bind address is not loopback. | unset |
+| `LAWMATICS_MCP_ALLOWED_ORIGINS` | Optional comma-separated `Origin` allowlist. | unset |
+| `LAWMATICS_CLIENT_ID` | Lawmatics OAuth client id | unset |
+| `LAWMATICS_CLIENT_SECRET` | Lawmatics OAuth client secret | unset |
+| `LAWMATICS_REDIRECT_URI` | Lawmatics OAuth redirect URI | unset |
+| `LAWMATICS_ACCESS_TOKEN` | Bearer token sent to the Lawmatics API | unset |
+
+```bash
+LAWMATICS_MCP_TRANSPORT=streamable-http PORT=8080 lawmatics-mcp
+```
+
+The server listens on `http://127.0.0.1:8080/mcp`.
 
 ## Environment
 
