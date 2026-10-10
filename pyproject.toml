@@ -5,11 +5,22 @@ build-backend = "hatchling.build"
 [project]
 name = "lawmatics-mcp"
 version = "0.1.0"
-description = "MCP server for Lawmatics - legal CRM & intake: matters, contacts, tasks, events, notes, forms"
+description = "MCP server for Lawmatics: matters, contacts, tasks, notes and intake forms."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 keywords = ["lawmatics", "mcp", "legal", "law", "crm", "intake"]
+classifiers = [
+    "Intended Audience :: Legal Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business",
+]
 dependencies = [
     "mcp>=2.3,<3",
     "pydantic>=2.11.0",
@@ -23,6 +34,11 @@ dependencies = [
 lawmatics-mcp = "lawmatics_mcp.server:main"
 lawmatics-mcp-setup = "lawmatics_mcp.setup.setup:main"
 lawmatics-mcp-verify = "lawmatics_mcp.setup.verify:main"
+
+[project.urls]
+Homepage = "https://github.com/RosenAdvertising/lawmatics-mcp"
+Repository = "https://github.com/RosenAdvertising/lawmatics-mcp"
+Issues = "https://github.com/RosenAdvertising/lawmatics-mcp/issues"
 
 [dependency-groups]
 dev = ["httpx2>=2.9.0", "pytest>=8.0.0"]
